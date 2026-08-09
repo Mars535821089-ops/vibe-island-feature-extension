@@ -1,0 +1,17 @@
+# Swift Package Manager build products
+.build/
+
+# Locally generated app bundles and rollback copies
+.artifacts/*
+!.artifacts/.metadata_never_index
+.rollback/
+
+# Local installation/restore state
+.installed-path
+.restore-backup-path
+
+# Runtime diagnostics
+VibeIslandMenuSpacer-diagnostics.txt
+
+# macOS metadata
+.DS_Store
