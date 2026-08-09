@@ -3,7 +3,6 @@
 
 # Locally generated app bundles and rollback copies
 .artifacts/*
-!.artifacts/.metadata_never_index
 .rollback/
 
 # Local installation/restore state
