@@ -4,18 +4,8 @@ import SpacerCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    private var recenterTimer: Timer?
     private let configuration = SpacerConfiguration()
-
-    private func seedCenteredPosition() {
-        guard let screen = NSScreen.screens.first else { return }
-        let preferenceKey = "NSStatusItem Preferred Position \(configuration.autosaveName)"
-        let preferredPosition = SpacerGeometry.preferredPositionFromRight(
-            screenWidth: screen.frame.width,
-            buttonWidth: configuration.width,
-            statusItemChromeWidth: 16
-        )
-        UserDefaults.standard.set(Float(preferredPosition), forKey: preferenceKey)
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
@@ -23,7 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let setupMode = CommandLine.arguments.contains("--setup")
             || ProcessInfo.processInfo.environment["VIBE_ISLAND_SPACER_SETUP"] == "1"
 
-        seedCenteredPosition()
         let item = NSStatusBar.system.statusItem(withLength: configuration.width)
         item.autosaveName = configuration.autosaveName
         item.isVisible = true
@@ -48,10 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.setAccessibilityLabel("Vibe Island 菜单栏占位")
             button.setAccessibilityHelp("按住 Command 将此占位拖到黑色小窗口正下方；退出后菜单栏立即恢复")
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 let windowFrame = button.window?.frame ?? .zero
                 let diagnostics = """
-                width=\(self.configuration.width)
+                width=\(item.length)
                 window=\(NSStringFromRect(windowFrame))
                 button=\(NSStringFromRect(button.frame))
                 title=\(button.attributedTitle.string)
@@ -63,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 NSLog(
                     "VibeIslandMenuSpacer width=%.1f window=%@ button=%@",
-                    self.configuration.width,
+                    item.length,
                     NSStringFromRect(windowFrame),
                     NSStringFromRect(button.frame)
                 )
@@ -80,9 +69,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ).target = self
         item.menu = menu
         statusItem = item
+
+        recenterStatusItem()
+        recenterTimer = Timer.scheduledTimer(
+            timeInterval: 0.5,
+            target: self,
+            selector: #selector(recenterStatusItem),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    @objc private func recenterStatusItem() {
+        guard let item = statusItem,
+              let button = item.button,
+              let window = button.window,
+              let screen = window.screen ?? NSScreen.screens.first else { return }
+
+        let buttonRightEdge = window.frame.minX + button.frame.maxX
+        let desiredWidth = SpacerGeometry.adaptiveWidth(
+            anchoredRightEdge: buttonRightEdge,
+            targetCenter: screen.frame.midX,
+            minimumWidth: SpacerConfiguration.compactIslandWidth,
+            maximumWidth: SpacerConfiguration.compactIslandWidth + 64
+        )
+
+        if abs(item.length - desiredWidth) > 0.5 {
+            item.length = desiredWidth
+        }
     }
 
     @objc private func quitAndRestore() {
+        recenterTimer?.invalidate()
         NSApplication.shared.terminate(nil)
     }
 }

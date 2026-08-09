@@ -3,9 +3,9 @@ import Foundation
 
 public struct SpacerConfiguration: Sendable, Equatable {
     public static let compactIslandWidth: CGFloat = 354
-    public static let defaultWidth: CGFloat = 440
+    public static let defaultWidth: CGFloat = compactIslandWidth
     public static let environmentKey = "VIBE_ISLAND_SPACER_WIDTH"
-    public static let defaultAutosaveName = "VibeIslandMenuSpacer.ReservedSlot"
+    public static let defaultAutosaveName = "VibeIslandMenuSpacer.CenteredSlot.v5"
 
     public let width: CGFloat
     public let autosaveName: String
@@ -24,15 +24,16 @@ public struct SpacerConfiguration: Sendable, Equatable {
 }
 
 public enum SpacerGeometry {
-    public static func preferredPositionFromRight(
-        screenWidth: CGFloat,
-        buttonWidth: CGFloat,
-        statusItemChromeWidth: CGFloat
+    public static func adaptiveWidth(
+        anchoredRightEdge: CGFloat,
+        targetCenter: CGFloat,
+        minimumWidth: CGFloat,
+        maximumWidth: CGFloat
     ) -> CGFloat {
-        max(
-            0,
-            screenWidth / 2 - buttonWidth / 2 - statusItemChromeWidth
-        )
+        let lower = max(0, minimumWidth)
+        let upper = max(lower, maximumWidth)
+        let centeredWidth = 2 * (anchoredRightEdge - targetCenter)
+        return min(max(centeredWidth, lower), upper)
     }
 
     public static func centeredSlot(

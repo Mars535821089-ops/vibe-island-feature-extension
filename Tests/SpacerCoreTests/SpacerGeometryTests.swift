@@ -2,6 +2,38 @@ import CoreGraphics
 import Testing
 @testable import SpacerCore
 
+@Test("adaptive width centers from the real anchored right edge")
+func adaptiveWidthCentersFromRightEdge() {
+    #expect(
+        SpacerGeometry.adaptiveWidth(
+            anchoredRightEdge: 1906,
+            targetCenter: 1720,
+            minimumWidth: 354,
+            maximumWidth: 418
+        ) == 372
+    )
+}
+
+@Test("adaptive width stays inside compact safety bounds")
+func adaptiveWidthUsesSafetyBounds() {
+    #expect(
+        SpacerGeometry.adaptiveWidth(
+            anchoredRightEdge: 1880,
+            targetCenter: 1720,
+            minimumWidth: 354,
+            maximumWidth: 418
+        ) == 354
+    )
+    #expect(
+        SpacerGeometry.adaptiveWidth(
+            anchoredRightEdge: 2000,
+            targetCenter: 1720,
+            minimumWidth: 354,
+            maximumWidth: 418
+        ) == 418
+    )
+}
+
 @Test("354-point compact island is centered on a 3440-point display")
 func centersKnownCompactIsland() {
     let rect = SpacerGeometry.centeredSlot(
@@ -37,35 +69,13 @@ func boundsOversizedSlot() {
     #expect(rect == CGRect(x: 0, y: 170, width: 300, height: 30))
 }
 
-@Test("status-item preference centers the button on the known display")
-func centersPreferredStatusItemPosition() {
-    let position = SpacerGeometry.preferredPositionFromRight(
-        screenWidth: 3440,
-        buttonWidth: 354,
-        statusItemChromeWidth: 16
-    )
-
-    #expect(position == 1527)
-}
-
-@Test("status-item preference follows display-width changes")
-func preferredStatusItemPositionFollowsDisplayWidth() {
-    let position = SpacerGeometry.preferredPositionFromRight(
-        screenWidth: 1920,
-        buttonWidth: 354,
-        statusItemChromeWidth: 16
-    )
-
-    #expect(position == 767)
-}
-
 @Test("configuration keeps the compact island size and reserves drift coverage")
 func configurationDefaultsToMeasuredWidth() {
     let configuration = SpacerConfiguration(environment: [:])
 
     #expect(SpacerConfiguration.compactIslandWidth == 354)
-    #expect(configuration.width == 440)
-    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ReservedSlot")
+    #expect(configuration.width == 354)
+    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.CenteredSlot.v5")
 }
 
 @Test("configuration accepts a positive width override")
@@ -79,6 +89,6 @@ func configurationAcceptsPositiveOverride() {
 
 @Test("configuration rejects invalid width overrides")
 func configurationRejectsInvalidOverride() {
-    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "0"]).width == 440)
-    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "abc"]).width == 440)
+    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "0"]).width == 354)
+    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "abc"]).width == 354)
 }
