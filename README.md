@@ -1,3 +1,6 @@
+> ⭐ 如果这个项目对你有帮助，欢迎点个 Star 支持一下！制作与维护不易，也欢迎通过赞助支持项目持续更新。
+> ⭐ If this project helps you, a Star is appreciated. Ongoing development and maintenance take time, and sponsorship is welcome.
+
 # Vibe Island Menu Spacer
 
 这个独立的 AppKit 小程序只创建一个固定宽度的 `NSStatusItem`，为 Vibe Island
