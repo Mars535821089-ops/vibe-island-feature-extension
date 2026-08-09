@@ -64,7 +64,7 @@ func configurationDefaultsToMeasuredWidth() {
     let configuration = SpacerConfiguration(environment: [:])
 
     #expect(SpacerConfiguration.compactIslandWidth == 354)
-    #expect(configuration.width == 500)
+    #expect(configuration.width == 440)
     #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ReservedSlot")
 }
 
@@ -79,6 +79,6 @@ func configurationAcceptsPositiveOverride() {
 
 @Test("configuration rejects invalid width overrides")
 func configurationRejectsInvalidOverride() {
-    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "0"]).width == 500)
-    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "abc"]).width == 500)
+    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "0"]).width == 440)
+    #expect(SpacerConfiguration(environment: ["VIBE_ISLAND_SPACER_WIDTH": "abc"]).width == 440)
 }

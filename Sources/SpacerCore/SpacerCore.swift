@@ -3,7 +3,7 @@ import Foundation
 
 public struct SpacerConfiguration: Sendable, Equatable {
     public static let compactIslandWidth: CGFloat = 354
-    public static let defaultWidth: CGFloat = 500
+    public static let defaultWidth: CGFloat = 440
     public static let environmentKey = "VIBE_ISLAND_SPACER_WIDTH"
     public static let defaultAutosaveName = "VibeIslandMenuSpacer.ReservedSlot"
 
