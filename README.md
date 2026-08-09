@@ -5,7 +5,9 @@
 
 这个独立的 AppKit 小程序只创建一个固定宽度的 `NSStatusItem`，为 Vibe Island
 的小黑窗口提供菜单栏占位。`/Applications/Vibe Island.app` 不会被改写、注入或重签名。
-展开状态继续由 Vibe Island 自己处理；占位宽度保持紧凑状态的实测值 354 pt。
+展开状态继续由 Vibe Island 自己处理。Vibe Island 紧凑窗口仍保持实测的
+354 pt，不修改本体尺寸；独立程序使用 500 pt 的透明占位，为 macOS 控制中心
+重新布局时产生的位置漂移预留覆盖余量。
 
 ## 自动绝对居中
 
@@ -15,8 +17,10 @@ cd /path/to/VibeIslandMenuSpacer
 ```
 
 程序每次启动都会读取主显示器宽度，重新写入自身 `NSStatusItem` 的中心位置。
-在当前 3440pt 主屏上，系统状态项实际占位为 `X=1542...1912`，完整包住
-Vibe Island 的紧凑区域 `X=1543...1897`。无需手动拖动。
+在当前 3440pt 主屏上，Vibe Island 窗口中心保持 `X=1720`；500 pt 占位的
+托管边界会随控制中心布局漂移，实测出现过 `X=1487...2003` 和
+`X=1502...2018`，两种状态均完整包住紧凑区域 `X=1543...1897`。
+无需手动拖动。
 
 ```bash
 ./scripts/run_installed.sh
