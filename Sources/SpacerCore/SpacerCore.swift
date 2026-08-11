@@ -24,18 +24,6 @@ public struct SpacerConfiguration: Sendable, Equatable {
 }
 
 public enum SpacerGeometry {
-    public static func adaptiveWidth(
-        anchoredRightEdge: CGFloat,
-        targetCenter: CGFloat,
-        minimumWidth: CGFloat,
-        maximumWidth: CGFloat
-    ) -> CGFloat {
-        let lower = max(0, minimumWidth)
-        let upper = max(lower, maximumWidth)
-        let centeredWidth = 2 * (anchoredRightEdge - targetCenter)
-        return min(max(centeredWidth, lower), upper)
-    }
-
     public static func centeredSlot(
         in screenFrame: CGRect,
         width requestedWidth: CGFloat,
@@ -49,5 +37,47 @@ public enum SpacerGeometry {
             width: width,
             height: height
         )
+    }
+}
+
+public enum SpacerPolicy {
+    public static func excludingSpacer(
+        from itemFrames: [CGRect],
+        spacerFrame: CGRect?
+    ) -> [CGRect] {
+        guard let spacerFrame else { return itemFrames }
+
+        return itemFrames.filter { frame in
+            abs(frame.minX - spacerFrame.minX) > 1
+                || abs(frame.minY - spacerFrame.minY) > 1
+                || abs(frame.width - spacerFrame.width) > 1
+                || abs(frame.height - spacerFrame.height) > 1
+        }
+    }
+
+    public static func shouldShowSpacer(
+        itemFrames: [CGRect],
+        spacerFrame: CGRect?,
+        islandFrame: CGRect
+    ) -> Bool {
+        let framesWithoutSpacer: [CGRect]
+        if let spacerFrame {
+            framesWithoutSpacer = itemFrames.map { frame in
+                guard frame.maxX <= spacerFrame.minX + 1 else { return frame }
+                return frame.offsetBy(dx: spacerFrame.width, dy: 0)
+            }
+        } else {
+            framesWithoutSpacer = itemFrames
+        }
+
+        return framesWithoutSpacer.contains { $0.intersects(islandFrame) }
+    }
+
+    public static func alignedLength(
+        currentLength: CGFloat,
+        spacerFrame: CGRect,
+        islandFrame: CGRect
+    ) -> CGFloat {
+        max(0, currentLength + spacerFrame.minX - islandFrame.minX)
     }
 }

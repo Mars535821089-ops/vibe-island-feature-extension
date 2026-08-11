@@ -2,35 +2,89 @@ import CoreGraphics
 import Testing
 @testable import SpacerCore
 
-@Test("adaptive width centers from the real anchored right edge")
-func adaptiveWidthCentersFromRightEdge() {
+@Test("no covered icon leaves the spacer disabled")
+func noCollisionLeavesSpacerDisabled() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let items = [
+        CGRect(x: 1904, y: 0, width: 41, height: 30),
+        CGRect(x: 1979, y: 0, width: 40, height: 30)
+    ]
+
+    #expect(!SpacerPolicy.shouldShowSpacer(itemFrames: items, spacerFrame: nil, islandFrame: island))
+}
+
+@Test("an icon covered by the compact island enables the spacer")
+func collisionEnablesSpacer() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let items = [
+        CGRect(x: 1837, y: 0, width: 67, height: 30),
+        CGRect(x: 1904, y: 0, width: 41, height: 30)
+    ]
+
+    #expect(SpacerPolicy.shouldShowSpacer(itemFrames: items, spacerFrame: nil, islandFrame: island))
+}
+
+@Test("an active spacer uses the reconstructed unreserved layout")
+func activeSpacerUsesProjectedLayout() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let spacer = CGRect(x: 1543, y: 0, width: 436, height: 30)
+    let shiftedItems = [
+        CGRect(x: 1401, y: 0, width: 67, height: 30),
+        CGRect(x: 1468, y: 0, width: 75, height: 30),
+        CGRect(x: 1979, y: 0, width: 40, height: 30)
+    ]
+
     #expect(
-        SpacerGeometry.adaptiveWidth(
-            anchoredRightEdge: 1906,
-            targetCenter: 1720,
-            minimumWidth: 354,
-            maximumWidth: 418
-        ) == 372
+        SpacerPolicy.shouldShowSpacer(
+            itemFrames: shiftedItems,
+            spacerFrame: spacer,
+            islandFrame: island
+        )
     )
 }
 
-@Test("adaptive width stays inside compact safety bounds")
-func adaptiveWidthUsesSafetyBounds() {
+@Test("an active spacer releases when the projected icons no longer reach the island")
+func activeSpacerReleasesWhenProjectionIsClear() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let spacer = CGRect(x: 1543, y: 0, width: 436, height: 30)
+    let shiftedItems = [
+        CGRect(x: 1000, y: 0, width: 50, height: 30),
+        CGRect(x: 1979, y: 0, width: 40, height: 30)
+    ]
+
     #expect(
-        SpacerGeometry.adaptiveWidth(
-            anchoredRightEdge: 1880,
-            targetCenter: 1720,
-            minimumWidth: 354,
-            maximumWidth: 418
-        ) == 354
+        !SpacerPolicy.shouldShowSpacer(
+            itemFrames: shiftedItems,
+            spacerFrame: spacer,
+            islandFrame: island
+        )
     )
+}
+
+@Test("status item length aligns its left edge with the centered island")
+func alignsSpacerLeftEdge() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let spacer = CGRect(x: 1609, y: 0, width: 370, height: 30)
+
     #expect(
-        SpacerGeometry.adaptiveWidth(
-            anchoredRightEdge: 2000,
-            targetCenter: 1720,
-            minimumWidth: 354,
-            maximumWidth: 418
-        ) == 418
+        SpacerPolicy.alignedLength(
+            currentLength: 354,
+            spacerFrame: spacer,
+            islandFrame: island
+        ) == 420
+    )
+}
+
+@Test("the spacer window is excluded without relying on its protected name")
+func excludesSpacerByGeometry() {
+    let spacer = CGRect(x: 1609, y: 0, width: 370, height: 30)
+    let icon = CGRect(x: 1533, y: 0, width: 41, height: 30)
+
+    #expect(
+        SpacerPolicy.excludingSpacer(
+            from: [spacer, icon],
+            spacerFrame: spacer
+        ) == [icon]
     )
 }
 
@@ -69,7 +123,7 @@ func boundsOversizedSlot() {
     #expect(rect == CGRect(x: 0, y: 170, width: 300, height: 30))
 }
 
-@Test("configuration keeps the compact island size and reserves drift coverage")
+@Test("configuration keeps the measured compact island size")
 func configurationDefaultsToMeasuredWidth() {
     let configuration = SpacerConfiguration(environment: [:])
 

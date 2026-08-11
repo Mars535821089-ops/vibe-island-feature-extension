@@ -4,63 +4,112 @@ import SpacerCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var recenterTimer: Timer?
+    private var observationTimer: Timer?
     private let configuration = SpacerConfiguration()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
-        let setupMode = CommandLine.arguments.contains("--setup")
-            || ProcessInfo.processInfo.environment["VIBE_ISLAND_SPACER_SETUP"] == "1"
+        refreshLayout()
+        observationTimer = Timer.scheduledTimer(
+            timeInterval: 0.5,
+            target: self,
+            selector: #selector(refreshLayout),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    @objc private func refreshLayout() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let windows = menuBarWindows()
+        let menuBarFrame = windows.first(where: { window in
+            window.layer == 24
+                && window.frame.minY <= 1
+                && window.frame.height >= 20
+                && window.frame.height <= 50
+                && window.frame.width >= screen.frame.width
+        })?.frame
+            ?? CGRect(x: screen.frame.minX, y: 0, width: screen.frame.width, height: 30)
+        let islandFrame = CGRect(
+            x: screen.frame.midX - SpacerConfiguration.compactIslandWidth / 2,
+            y: menuBarFrame.minY,
+            width: SpacerConfiguration.compactIslandWidth,
+            height: menuBarFrame.height
+        )
+        let spacerFrame = statusItem?.button?.window.map { window in
+            CGRect(
+                x: window.frame.minX,
+                y: menuBarFrame.minY,
+                width: window.frame.width,
+                height: menuBarFrame.height
+            )
+        }
+        let hostedItemFrames = windows
+            .filter { window in
+                window.layer == 25
+                    && abs(window.frame.minY - menuBarFrame.minY) <= 1
+                    && abs(window.frame.height - menuBarFrame.height) <= 1
+                    && window.frame.maxX > screen.frame.minX
+                    && window.frame.minX < screen.frame.maxX
+            }
+            .map(\.frame)
+        let itemFrames = SpacerPolicy.excludingSpacer(
+            from: hostedItemFrames,
+            spacerFrame: spacerFrame
+        )
+
+        if let item = statusItem {
+            guard let spacerFrame else { return }
+
+            let desiredLength = SpacerPolicy.alignedLength(
+                currentLength: item.length,
+                spacerFrame: spacerFrame,
+                islandFrame: islandFrame
+            )
+            if abs(item.length - desiredLength) > 0.5 {
+                item.length = desiredLength
+            }
+
+            if !SpacerPolicy.shouldShowSpacer(
+                itemFrames: itemFrames,
+                spacerFrame: spacerFrame,
+                islandFrame: islandFrame
+            ) {
+                removeStatusItem(item)
+            }
+        } else if SpacerPolicy.shouldShowSpacer(
+            itemFrames: itemFrames,
+            spacerFrame: nil,
+            islandFrame: islandFrame
+        ) {
+            createStatusItem()
+        }
+
+        writeDiagnostics(
+            islandFrame: islandFrame,
+            spacerFrame: spacerFrame,
+            itemFrames: itemFrames
+        )
+    }
+
+    private func createStatusItem() {
+        guard statusItem == nil else { return }
 
         let item = NSStatusBar.system.statusItem(withLength: configuration.width)
         item.autosaveName = configuration.autosaveName
         item.isVisible = true
-
-        // Keep the slot visually quiet: Vibe Island's own window sits above it.
-        // A tooltip and menu make the otherwise blank item discoverable and reversible.
         if let button = item.button {
-            if setupMode {
-                button.attributedTitle = NSAttributedString(
-                    string: "  ⟵ VIBE ISLAND SLOT ⟶  ",
-                    attributes: [
-                        .foregroundColor: NSColor.systemYellow,
-                        .font: NSFont.boldSystemFont(ofSize: 12)
-                    ]
-                )
-            } else {
-                button.title = ""
-            }
+            button.title = ""
             button.image = nil
             button.imagePosition = .noImage
-            button.toolTip = "Vibe Island 占位（按住 ⌘ 拖动到黑色小窗口正下方）"
-            button.setAccessibilityLabel("Vibe Island 菜单栏占位")
-            button.setAccessibilityHelp("按住 Command 将此占位拖到黑色小窗口正下方；退出后菜单栏立即恢复")
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                let windowFrame = button.window?.frame ?? .zero
-                let diagnostics = """
-                width=\(item.length)
-                window=\(NSStringFromRect(windowFrame))
-                button=\(NSStringFromRect(button.frame))
-                title=\(button.attributedTitle.string)
-                """
-                try? diagnostics.write(
-                    toFile: "/tmp/VibeIslandMenuSpacer-diagnostics.txt",
-                    atomically: true,
-                    encoding: .utf8
-                )
-                NSLog(
-                    "VibeIslandMenuSpacer width=%.1f window=%@ button=%@",
-                    item.length,
-                    NSStringFromRect(windowFrame),
-                    NSStringFromRect(button.frame)
-                )
-            }
+            button.toolTip = "Vibe Island 条件占位"
+            button.setAccessibilityLabel("Vibe Island 条件占位")
         }
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Vibe Island 占位", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "仅在图标被遮挡时自动占位", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "退出并恢复菜单栏",
@@ -69,40 +118,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ).target = self
         item.menu = menu
         statusItem = item
-
-        recenterStatusItem()
-        recenterTimer = Timer.scheduledTimer(
-            timeInterval: 0.5,
-            target: self,
-            selector: #selector(recenterStatusItem),
-            userInfo: nil,
-            repeats: true
-        )
     }
 
-    @objc private func recenterStatusItem() {
-        guard let item = statusItem,
-              let button = item.button,
-              let window = button.window,
-              let screen = window.screen ?? NSScreen.screens.first else { return }
+    private func removeStatusItem(_ item: NSStatusItem) {
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+    }
 
-        let buttonRightEdge = window.frame.minX + button.frame.maxX
-        let desiredWidth = SpacerGeometry.adaptiveWidth(
-            anchoredRightEdge: buttonRightEdge,
-            targetCenter: screen.frame.midX,
-            minimumWidth: SpacerConfiguration.compactIslandWidth,
-            maximumWidth: SpacerConfiguration.compactIslandWidth + 64
-        )
+    private func menuBarWindows() -> [MenuBarWindow] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+            as? [[String: Any]] ?? []
 
-        if abs(item.length - desiredWidth) > 0.5 {
-            item.length = desiredWidth
+        return rawWindows.compactMap { info in
+            guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
+                return nil
+            }
+            return MenuBarWindow(
+                layer: info[kCGWindowLayer as String] as? Int ?? -1,
+                frame: frame
+            )
         }
     }
 
+    private func writeDiagnostics(
+        islandFrame: CGRect,
+        spacerFrame: CGRect?,
+        itemFrames: [CGRect]
+    ) {
+        let diagnostics = """
+        active=\(statusItem != nil)
+        island=\(NSStringFromRect(islandFrame))
+        spacer=\(NSStringFromRect(spacerFrame ?? .zero))
+        items=\(itemFrames.count)
+        """
+        try? diagnostics.write(
+            toFile: "/tmp/VibeIslandMenuSpacer-diagnostics.txt",
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
     @objc private func quitAndRestore() {
-        recenterTimer?.invalidate()
+        observationTimer?.invalidate()
+        if let statusItem {
+            removeStatusItem(statusItem)
+        }
         NSApplication.shared.terminate(nil)
     }
+}
+
+private struct MenuBarWindow {
+    let layer: Int
+    let frame: CGRect
 }
 
 let application = NSApplication.shared
