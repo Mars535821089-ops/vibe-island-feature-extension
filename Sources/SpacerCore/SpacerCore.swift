@@ -5,7 +5,7 @@ public struct SpacerConfiguration: Sendable, Equatable {
     public static let compactIslandWidth: CGFloat = 354
     public static let defaultWidth: CGFloat = compactIslandWidth
     public static let environmentKey = "VIBE_ISLAND_SPACER_WIDTH"
-    public static let defaultAutosaveName = "VibeIslandMenuSpacer.CenteredSlot.v5"
+    public static let defaultAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v7"
 
     public let width: CGFloat
     public let autosaveName: String

@@ -129,7 +129,7 @@ func configurationDefaultsToMeasuredWidth() {
 
     #expect(SpacerConfiguration.compactIslandWidth == 354)
     #expect(configuration.width == 354)
-    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.CenteredSlot.v5")
+    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ConditionalSlot.v7")
 }
 
 @Test("configuration accepts a positive width override")
