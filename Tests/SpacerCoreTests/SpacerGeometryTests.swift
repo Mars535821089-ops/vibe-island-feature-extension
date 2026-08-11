@@ -88,6 +88,18 @@ func excludesSpacerByGeometry() {
     )
 }
 
+@Test("a hidden spacer becomes visible only for a real collision")
+func hiddenSpacerVisibilityTransition() {
+    #expect(SpacerPolicy.visibilityAction(isVisible: false, hasCollision: true) == .show)
+    #expect(SpacerPolicy.visibilityAction(isVisible: false, hasCollision: false) == .none)
+}
+
+@Test("a visible spacer hides instead of being destroyed when clear")
+func visibleSpacerVisibilityTransition() {
+    #expect(SpacerPolicy.visibilityAction(isVisible: true, hasCollision: false) == .hide)
+    #expect(SpacerPolicy.visibilityAction(isVisible: true, hasCollision: true) == .none)
+}
+
 @Test("354-point compact island is centered on a 3440-point display")
 func centersKnownCompactIsland() {
     let rect = SpacerGeometry.centeredSlot(

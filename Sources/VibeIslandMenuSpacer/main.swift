@@ -6,11 +6,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var observationTimer: Timer?
     private let configuration = SpacerConfiguration()
+    private let setupMode = CommandLine.arguments.contains("--setup")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
-        refreshLayout()
+        if setupMode {
+            createStatusItem()
+        } else {
+            refreshLayout()
+        }
         observationTimer = Timer.scheduledTimer(
             timeInterval: 0.5,
             target: self,
@@ -21,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshLayout() {
+        guard !setupMode else { return }
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
         let windows = menuBarWindows()
@@ -60,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spacerFrame: spacerFrame
         )
 
-        if let item = statusItem {
+        if let item = statusItem, item.isVisible {
             guard let spacerFrame else { return }
 
             let desiredLength = SpacerPolicy.alignedLength(
@@ -72,19 +78,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 item.length = desiredLength
             }
 
-            if !SpacerPolicy.shouldShowSpacer(
+            let hasCollision = SpacerPolicy.shouldShowSpacer(
                 itemFrames: itemFrames,
                 spacerFrame: spacerFrame,
                 islandFrame: islandFrame
-            ) {
-                removeStatusItem(item)
+            )
+            if SpacerPolicy.visibilityAction(
+                isVisible: true,
+                hasCollision: hasCollision
+            ) == .hide {
+                item.isVisible = false
             }
-        } else if SpacerPolicy.shouldShowSpacer(
-            itemFrames: itemFrames,
-            spacerFrame: nil,
-            islandFrame: islandFrame
-        ) {
-            createStatusItem()
+        } else {
+            let hasCollision = SpacerPolicy.shouldShowSpacer(
+                itemFrames: itemFrames,
+                spacerFrame: nil,
+                islandFrame: islandFrame
+            )
+            if SpacerPolicy.visibilityAction(
+                isVisible: false,
+                hasCollision: hasCollision
+            ) == .show {
+                if let item = statusItem {
+                    item.isVisible = true
+                } else {
+                    createStatusItem()
+                }
+            }
         }
 
         writeDiagnostics(
@@ -120,11 +140,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
-    private func removeStatusItem(_ item: NSStatusItem) {
-        NSStatusBar.system.removeStatusItem(item)
-        statusItem = nil
-    }
-
     private func menuBarWindows() -> [MenuBarWindow] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
@@ -148,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         itemFrames: [CGRect]
     ) {
         let diagnostics = """
-        active=\(statusItem != nil)
+        active=\(statusItem?.isVisible == true)
         island=\(NSStringFromRect(islandFrame))
         spacer=\(NSStringFromRect(spacerFrame ?? .zero))
         items=\(itemFrames.count)
@@ -162,9 +177,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitAndRestore() {
         observationTimer?.invalidate()
-        if let statusItem {
-            removeStatusItem(statusItem)
-        }
         NSApplication.shared.terminate(nil)
     }
 }

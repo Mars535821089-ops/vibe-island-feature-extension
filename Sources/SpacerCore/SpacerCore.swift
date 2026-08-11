@@ -41,6 +41,15 @@ public enum SpacerGeometry {
 }
 
 public enum SpacerPolicy {
+    public static func visibilityAction(
+        isVisible: Bool,
+        hasCollision: Bool
+    ) -> SpacerVisibilityAction {
+        if isVisible && !hasCollision { return .hide }
+        if !isVisible && hasCollision { return .show }
+        return .none
+    }
+
     public static func excludingSpacer(
         from itemFrames: [CGRect],
         spacerFrame: CGRect?
@@ -80,4 +89,10 @@ public enum SpacerPolicy {
     ) -> CGFloat {
         max(0, currentLength + spacerFrame.minX - islandFrame.minX)
     }
+}
+
+public enum SpacerVisibilityAction: Sendable, Equatable {
+    case show
+    case hide
+    case none
 }

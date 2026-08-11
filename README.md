@@ -5,7 +5,7 @@
 
 这个独立的 AppKit 小程序实时读取 macOS 菜单栏托管窗口的真实坐标。只有真实图标
 与 Vibe Island 的 354 pt 紧凑区域相交时，程序才创建一个 `NSStatusItem` 把图标移到
-小岛左侧；没有图标被遮挡时，占位完全不存在。`/Applications/Vibe Island.app` 不会
+小岛左侧；没有图标被遮挡时，占位自动隐藏且不占任何空间。`/Applications/Vibe Island.app` 不会
 被改写、注入或重签名，展开状态继续由 Vibe Island 自己处理。
 
 ## 条件占位与绝对居中
