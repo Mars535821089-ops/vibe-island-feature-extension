@@ -30,14 +30,16 @@ cd /path/to/VibeIslandMenuSpacer
 ## 安装、验证与回滚
 
 ```bash
-./scripts/install.sh          # 只安装到 ~/Applications，不创建开机启动
+./scripts/install.sh          # 安装到 ~/Applications，并注册用户登录启动
 ./scripts/stop_and_restore.sh # 立即释放 NSStatusItem，菜单栏恢复
 ./scripts/rollback.sh         # 停止程序、移除本 App，并恢复安装前备份（若有）
 ```
 
 脚本均使用 `set -euo pipefail`；构建前先跑完整 `swift test`，App 采用本地临时签名。
-整个方案没有 LaunchAgent，也没有修改系统状态栏设置。需要改回时优先运行
-`stop_and_restore.sh`，它只结束自身进程。
+安装脚本会创建只含 `RunAtLoad` 的用户级 LaunchAgent，保证重新登录或重启后扩展继续运行；
+它不会在你主动退出后立刻拉起，也不会启动或修改 Vibe Island。没有真实遮挡时，状态项会被
+彻底移除，不残留 16 pt 隐形空位。需要改回时优先运行 `stop_and_restore.sh` 停止本次登录中的
+运行，或运行 `rollback.sh` 同时卸载登录启动项和扩展。
 
 构建产物放在项目隐藏目录 `.artifacts/`，避免 Spotlight 把开发副本显示成第二个 App；
 真正运行的副本只在 `~/Applications/`。

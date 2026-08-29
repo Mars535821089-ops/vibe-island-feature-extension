@@ -3,6 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${(%):-%N}")/.." && pwd)"
 DEST="$HOME/Applications/Vibe Island Menu Spacer.app"
+LAUNCH_AGENT_LABEL="local.vibeisland.menu-spacer.autostart"
+LAUNCH_AGENT="$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
+
+launchctl bootout "gui/$(id -u)/$LAUNCH_AGENT_LABEL" 2>/dev/null || true
+rm -f "$LAUNCH_AGENT"
 
 "$ROOT_DIR/scripts/stop_and_restore.sh" >/dev/null
 if [[ -e "$DEST" ]]; then
