@@ -222,6 +222,58 @@ func excludesSpacerByGeometry() {
     )
 }
 
+@Test("exactly two contiguous icons beside the spacer are retained for the island right side")
+func selectsTwoIconsForRightSide() {
+    let spacer = CGRect(x: 1543, y: 0, width: 421, height: 30)
+    let items = [
+        CGRect(x: 1429, y: 0, width: 35, height: 30),
+        CGRect(x: 1464, y: 0, width: 34, height: 30),
+        CGRect(x: 1498, y: 0, width: 45, height: 30),
+        CGRect(x: 1964, y: 0, width: 48, height: 30)
+    ]
+
+    #expect(
+        SpacerPolicy.rightSideFrames(
+            itemFrames: items,
+            spacerFrame: spacer,
+            count: 2
+        ) == Array(items[1...2])
+    )
+}
+
+@Test("a gap beside the spacer prevents proxying unrelated icons")
+func rejectsNoncontiguousRightSideIcons() {
+    let spacer = CGRect(x: 1543, y: 0, width: 421, height: 30)
+    let items = [
+        CGRect(x: 1400, y: 0, width: 34, height: 30),
+        CGRect(x: 1498, y: 0, width: 45, height: 30)
+    ]
+
+    #expect(
+        SpacerPolicy.rightSideFrames(
+            itemFrames: items,
+            spacerFrame: spacer,
+            count: 2
+        ).isEmpty
+    )
+}
+
+@Test("retained icon widths shorten the spacer instead of creating a right gap")
+func retainedIconsShortenSpacer() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let spacer = CGRect(x: 1543, y: 0, width: 421, height: 30)
+
+    #expect(
+        SpacerPolicy.alignmentAction(
+            currentLength: 405,
+            spacerFrame: spacer,
+            islandFrame: island,
+            leadingReservedWidth: 79,
+            maximumOverflow: .greatestFiniteMagnitude
+        ) == .setLength(326)
+    )
+}
+
 @Test("a top-origin CoreGraphics status item is recognized inside the menu bar")
 func recognizesCoreGraphicsMenuBarWindow() {
     let menuBar = CGRect(x: 0, y: 0, width: 3440, height: 30)
@@ -411,10 +463,10 @@ func configurationDefaultsToMeasuredWidth() {
 
     #expect(SpacerConfiguration.compactIslandWidth == 354)
     #expect(configuration.width == 354)
-    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ConditionalSlot.v7")
+    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ConditionalSlot.v8")
     #expect(
         configuration.preferredPositionKey
-            == "NSStatusItem Preferred Position VibeIslandMenuSpacer.ConditionalSlot.v7"
+        == "NSStatusItem Preferred Position VibeIslandMenuSpacer.ConditionalSlot.v8"
     )
     #expect(configuration.savedPositionKey == "VibeIslandMenuSpacer Saved Preferred Position")
     #expect(configuration.savedLengthKey == "VibeIslandMenuSpacer Saved Length")
@@ -423,7 +475,7 @@ func configurationDefaultsToMeasuredWidth() {
         configuration.savedCalibrationVersionKey
             == "VibeIslandMenuSpacer Saved Calibration Version"
     )
-    #expect(SpacerConfiguration.calibrationVersion == 5)
+    #expect(SpacerConfiguration.calibrationVersion == 6)
 }
 
 @Test("configuration accepts a positive width override")

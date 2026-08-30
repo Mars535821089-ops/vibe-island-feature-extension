@@ -21,6 +21,14 @@ if [[ -e "$DEST" && ! -f "$ROOT_DIR/.installed-path" ]]; then
   echo "已保留旧版本：$BACKUP"
 fi
 ditto "$SOURCE" "$DEST"
+CAPTURE_TOOL="$(mktemp -t vibe-island-icon-capture)"
+if clang -fobjc-arc -mmacosx-version-min=14.0 \
+  "$ROOT_DIR/scripts/capture_right_icons.m" \
+  -o "$CAPTURE_TOOL" \
+  -framework Foundation -framework CoreGraphics -framework ImageIO >/dev/null 2>&1; then
+  "$CAPTURE_TOOL" "$DEST/Contents/Resources" || true
+fi
+codesign --force --deep --sign - "$DEST" >/dev/null
 codesign --verify --deep --strict "$DEST"
 echo "$DEST" > "$ROOT_DIR/.installed-path"
 

@@ -17,6 +17,8 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 BIN_PATH="$(swift build -c release --show-bin-path)/$PRODUCT_NAME"
 cp "$BIN_PATH" "$CONTENTS_DIR/MacOS/$PRODUCT_NAME"
 chmod 755 "$CONTENTS_DIR/MacOS/$PRODUCT_NAME"
+cp "$ROOT_DIR/Resources/right-icon-1.png" "$CONTENTS_DIR/Resources/right-icon-1.png"
+cp "$ROOT_DIR/Resources/right-icon-2.png" "$CONTENTS_DIR/Resources/right-icon-2.png"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

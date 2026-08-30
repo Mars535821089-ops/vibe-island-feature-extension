@@ -5,10 +5,10 @@ public struct SpacerConfiguration: Sendable, Equatable {
     public static let compactIslandWidth: CGFloat = 354
     public static let maximumAnchorUnderfill: CGFloat = 4
     public static let maximumAnchorOverflow: CGFloat = 8
-    public static let calibrationVersion = 5
+    public static let calibrationVersion = 6
     public static let defaultWidth: CGFloat = compactIslandWidth
     public static let environmentKey = "VIBE_ISLAND_SPACER_WIDTH"
-    public static let defaultAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v7"
+    public static let defaultAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v8"
 
     public let width: CGFloat
     public let autosaveName: String
@@ -100,6 +100,34 @@ public enum SpacerGeometry {
 }
 
 public enum SpacerPolicy {
+    public static func rightSideFrames(
+        itemFrames: [CGRect],
+        spacerFrame: CGRect,
+        count: Int,
+        adjacencyTolerance: CGFloat = 2
+    ) -> [CGRect] {
+        guard count > 0 else { return [] }
+        let sorted = itemFrames
+            .filter { $0.maxX <= spacerFrame.minX + adjacencyTolerance }
+            .sorted { $0.minX < $1.minX }
+        guard let last = sorted.last,
+              abs(last.maxX - spacerFrame.minX) <= adjacencyTolerance else {
+            return []
+        }
+
+        var selected = [last]
+        var expectedRightEdge = last.minX
+        for frame in sorted.dropLast().reversed() where selected.count < count {
+            guard abs(frame.maxX - expectedRightEdge) <= adjacencyTolerance else {
+                return []
+            }
+            selected.append(frame)
+            expectedRightEdge = frame.minX
+        }
+        guard selected.count == count else { return [] }
+        return selected.reversed()
+    }
+
     public static func presenceAction(
         isPresent: Bool,
         hasCollision: Bool
@@ -145,6 +173,7 @@ public enum SpacerPolicy {
         currentLength: CGFloat,
         spacerFrame: CGRect,
         islandFrame: CGRect,
+        leadingReservedWidth: CGFloat = 0,
         tolerance: CGFloat = 0.5,
         maximumUnderfill: CGFloat = SpacerConfiguration.maximumAnchorUnderfill,
         maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow
@@ -157,9 +186,8 @@ public enum SpacerPolicy {
             return .reposition
         }
 
-        return .setLength(
-            max(0, currentLength + spacerFrame.minX - islandFrame.minX)
-        )
+        let effectiveLeftEdge = spacerFrame.minX - max(0, leadingReservedWidth)
+        return .setLength(max(0, currentLength + effectiveLeftEdge - islandFrame.minX))
     }
 }
 
@@ -189,12 +217,14 @@ public struct SpacerLengthSettler: Sendable, Equatable {
     private let tolerance: CGFloat
     private let maximumUnderfill: CGFloat
     private let maximumCorrections: Int
+    private let leadingReservedWidth: CGFloat
     private var correctionCount = 0
 
     public init(
         initialLength: CGFloat,
         initialFrame: CGRect,
         islandFrame: CGRect,
+        leadingReservedWidth: CGFloat = 0,
         tolerance: CGFloat = 0.5,
         maximumUnderfill: CGFloat = SpacerConfiguration.maximumAnchorUnderfill,
         maximumCorrections: Int = 3
@@ -203,9 +233,10 @@ public struct SpacerLengthSettler: Sendable, Equatable {
         self.tolerance = tolerance
         self.maximumUnderfill = max(0, maximumUnderfill)
         self.maximumCorrections = max(0, maximumCorrections)
+        self.leadingReservedWidth = max(0, leadingReservedWidth)
         requestedLength = max(
             0,
-            initialLength + initialFrame.minX - islandFrame.minX
+            initialLength + initialFrame.minX - self.leadingReservedWidth - islandFrame.minX
         )
     }
 
@@ -224,7 +255,7 @@ public struct SpacerLengthSettler: Sendable, Equatable {
             return .recalibrate
         }
 
-        let leftEdgeError = spacerFrame.minX - islandFrame.minX
+        let leftEdgeError = spacerFrame.minX - leadingReservedWidth - islandFrame.minX
         if abs(leftEdgeError) <= tolerance {
             return .ready(anchorRight: spacerFrame.maxX)
         }
