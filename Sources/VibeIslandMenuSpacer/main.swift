@@ -20,8 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settlementWaitTicks = 0
     private var restorationWaitTicks = 0
     private var latestItemWindows: [MenuBarWindow] = []
-    private var rightSideReservedWidth: CGFloat = 0
-    private let rightSideProxyController = RightSideProxyController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
@@ -234,7 +232,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 currentLength: item.length,
                 spacerFrame: spacerFrame,
                 islandFrame: islandFrame,
-                leadingReservedWidth: rightSideReservedWidth,
                 maximumOverflow: maximumOverflow
             ) {
             case .reposition:
@@ -273,12 +270,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hasCollision: hasCollision
             ) == .remove {
                 removeSpacer()
-            } else {
-                updateRightSideProxies(
-                    spacerFrame: spacerFrame,
-                    islandFrame: islandFrame,
-                    menuBarFrame: menuBarFrame
-                )
             }
 
             writeDiagnostics(
@@ -447,17 +438,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spacerFrame: CGRect,
         islandFrame: CGRect
     ) {
-        let retainedFrames = SpacerPolicy.rightSideFrames(
-            itemFrames: latestItemWindows.map(\.frame),
-            spacerFrame: spacerFrame,
-            count: 2
-        )
-        rightSideReservedWidth = retainedFrames.reduce(0) { $0 + $1.width }
         let settler = SpacerLengthSettler(
             initialLength: item.length,
             initialFrame: spacerFrame,
-            islandFrame: islandFrame,
-            leadingReservedWidth: rightSideReservedWidth
+            islandFrame: islandFrame
         )
         lengthSettler = settler
         settlementWaitTicks = 0
@@ -541,7 +525,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = nil
         NSStatusBar.system.removeStatusItem(item)
         statusItem = nil
-        rightSideProxyController.clear()
     }
 
     private func removeSpacer() {
@@ -557,35 +540,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentPreferredPosition = nil
         calibratedIslandRight = nil
         calibratedAnchorRight = nil
-        rightSideReservedWidth = 0
-    }
-
-    private func updateRightSideProxies(
-        spacerFrame: CGRect,
-        islandFrame: CGRect,
-        menuBarFrame: CGRect
-    ) {
-        let selectedFrames = SpacerPolicy.rightSideFrames(
-            itemFrames: latestItemWindows.map(\.frame),
-            spacerFrame: spacerFrame,
-            count: 2
-        )
-        let selectedWindows = selectedFrames.compactMap { selectedFrame in
-            latestItemWindows.first { window in
-                abs(window.frame.minX - selectedFrame.minX) <= 1
-                    && abs(window.frame.width - selectedFrame.width) <= 1
-            }
-        }
-        guard selectedWindows.count == 2,
-              spacerFrame.maxX > islandFrame.maxX else {
-            rightSideProxyController.clear()
-            return
-        }
-        rightSideProxyController.update(
-            sources: selectedWindows,
-            destinationRange: islandFrame.maxX...spacerFrame.maxX,
-            menuBarFrame: menuBarFrame
-        )
     }
 
     private func menuBarWindows() -> [MenuBarWindow] {
@@ -628,16 +582,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }.count
         let collisionText = hasCollision.map { String($0) } ?? "pending"
-        let proxyFrames = rightSideProxyController.frames
-        let proxySpan = proxyFrames.isEmpty
-            ? CGRect.zero
-            : CGRect(
-                x: proxyFrames.map(\.minX).min() ?? 0,
-                y: menuBarYForDiagnostics(proxyFrames),
-                width: (proxyFrames.map(\.maxX).max() ?? 0)
-                    - (proxyFrames.map(\.minX).min() ?? 0),
-                height: proxyFrames.map(\.height).max() ?? 0
-            )
         let diagnostics = """
         present=\(statusItem != nil)
         active=\((statusItem?.length ?? 0) > 0.5)
@@ -652,18 +596,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         directIntersections=\(directIntersections)
         relocatedItems=\(relocatedFrames.count)
         unprotectedIntersections=\(unprotectedIntersections)
-        proxyItems=\(proxyFrames.count)
-        proxySpan=\(NSStringFromRect(proxySpan))
         """
         try? diagnostics.write(
             toFile: "/tmp/VibeIslandMenuSpacer-diagnostics.txt",
             atomically: true,
             encoding: .utf8
         )
-    }
-
-    private func menuBarYForDiagnostics(_ frames: [CGRect]) -> CGFloat {
-        frames.map(\.minY).min() ?? 0
     }
 
     @objc private func quitAndRestore() {
@@ -678,120 +616,6 @@ private struct MenuBarWindow {
     let ownerPID: pid_t
     let layer: Int
     let frame: CGRect
-}
-
-@MainActor
-private final class RightSideProxyController: NSObject {
-    private var panels: [NSPanel] = []
-    private var iconViews: [ProxyIconView] = []
-    private var sources: [MenuBarWindow] = []
-    private var signature = ""
-    private var refreshCounter = 0
-
-    var frames: [CGRect] { panels.map(\.frame) }
-
-    func update(
-        sources: [MenuBarWindow],
-        destinationRange: ClosedRange<CGFloat>,
-        menuBarFrame: CGRect
-    ) {
-        guard sources.count == 2,
-              destinationRange.upperBound > destinationRange.lowerBound,
-              let screen = NSScreen.screens.first(where: {
-                  abs($0.frame.width - menuBarFrame.width) <= 1
-              }) ?? NSScreen.main else {
-            clear()
-            return
-        }
-
-        let width = (destinationRange.upperBound - destinationRange.lowerBound) / 2
-        let appKitY = screen.frame.maxY - menuBarFrame.maxY
-        let frames = sources.indices.map { index in
-            CGRect(
-                x: destinationRange.lowerBound + CGFloat(index) * width,
-                y: appKitY,
-                width: width,
-                height: menuBarFrame.height
-            )
-        }
-        let newSignature = zip(sources, frames).map { source, frame in
-            "\(source.windowID):\(Int(frame.minX.rounded())):\(Int(frame.width.rounded()))"
-        }.joined(separator: "|")
-
-        if newSignature != signature {
-            clear()
-            signature = newSignature
-            self.sources = sources
-            for (index, frame) in frames.enumerated() {
-                let panel = NSPanel(
-                    contentRect: frame,
-                    styleMask: [.borderless, .nonactivatingPanel],
-                    backing: .buffered,
-                    defer: false
-                )
-                panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 4)
-                panel.backgroundColor = .clear
-                panel.isOpaque = false
-                panel.hasShadow = false
-                panel.hidesOnDeactivate = false
-                panel.ignoresMouseEvents = true
-                panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-
-                let iconView = ProxyIconView(frame: CGRect(origin: .zero, size: frame.size))
-                iconView.setAccessibilityLabel("菜单栏图标代理 \(index + 1)")
-                panel.contentView = iconView
-                panel.orderFrontRegardless()
-                panels.append(panel)
-                iconViews.append(iconView)
-            }
-            refreshImages()
-            refreshCounter = 0
-        } else {
-            refreshCounter += 1
-            if refreshCounter >= 4 {
-                refreshCounter = 0
-                refreshImages()
-            }
-        }
-    }
-
-    func clear() {
-        panels.forEach { $0.close() }
-        panels.removeAll()
-        iconViews.removeAll()
-        sources.removeAll()
-        signature = ""
-        refreshCounter = 0
-    }
-
-    private func refreshImages() {
-        for index in sources.indices where iconViews.indices.contains(index) {
-            guard let resourceURL = Bundle.main.resourceURL?
-                .appendingPathComponent("right-icon-\(index + 1).png"),
-                let image = NSImage(contentsOf: resourceURL) else { continue }
-            iconViews[index].image = image
-        }
-    }
-
-}
-
-@MainActor
-private final class ProxyIconView: NSView {
-    var image: NSImage? {
-        didSet { needsDisplay = true }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        image?.draw(
-            in: bounds,
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1,
-            respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.high]
-        )
-    }
 }
 
 let application = NSApplication.shared

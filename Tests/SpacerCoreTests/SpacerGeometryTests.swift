@@ -475,7 +475,7 @@ func configurationDefaultsToMeasuredWidth() {
         configuration.savedCalibrationVersionKey
             == "VibeIslandMenuSpacer Saved Calibration Version"
     )
-    #expect(SpacerConfiguration.calibrationVersion == 6)
+    #expect(SpacerConfiguration.calibrationVersion == 7)
 }
 
 @Test("configuration accepts a positive width override")

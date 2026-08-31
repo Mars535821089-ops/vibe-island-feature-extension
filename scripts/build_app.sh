@@ -17,8 +17,6 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 BIN_PATH="$(swift build -c release --show-bin-path)/$PRODUCT_NAME"
 cp "$BIN_PATH" "$CONTENTS_DIR/MacOS/$PRODUCT_NAME"
 chmod 755 "$CONTENTS_DIR/MacOS/$PRODUCT_NAME"
-cp "$ROOT_DIR/Resources/right-icon-1.png" "$CONTENTS_DIR/Resources/right-icon-1.png"
-cp "$ROOT_DIR/Resources/right-icon-2.png" "$CONTENTS_DIR/Resources/right-icon-2.png"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -47,7 +45,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc signing keeps this local helper launchable without touching Vibe Island.
+# The helper uses no protected APIs, so a local ad-hoc signature is sufficient.
 codesign --force --deep --sign - "$APP_DIR" >/dev/null
 codesign --verify --deep --strict "$APP_DIR"
 echo "$APP_DIR"
