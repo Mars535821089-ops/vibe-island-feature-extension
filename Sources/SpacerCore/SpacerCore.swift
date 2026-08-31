@@ -3,9 +3,9 @@ import Foundation
 
 public struct SpacerConfiguration: Sendable, Equatable {
     public static let compactIslandWidth: CGFloat = 354
-    public static let maximumAnchorUnderfill: CGFloat = 4
+    public static let maximumAnchorUnderfill: CGFloat = 6
     public static let maximumAnchorOverflow: CGFloat = 8
-    public static let calibrationVersion = 7
+    public static let calibrationVersion = 8
     public static let defaultWidth: CGFloat = compactIslandWidth
     public static let environmentKey = "VIBE_ISLAND_SPACER_WIDTH"
     public static let defaultAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v8"
@@ -186,8 +186,9 @@ public enum SpacerPolicy {
             return .reposition
         }
 
-        let effectiveLeftEdge = spacerFrame.minX - max(0, leadingReservedWidth)
-        return .setLength(max(0, currentLength + effectiveLeftEdge - islandFrame.minX))
+        let windowWidthOverhead = max(0, spacerFrame.width - currentLength)
+        let targetWindowWidth = max(0, islandFrame.width - max(0, leadingReservedWidth))
+        return .setLength(max(0, targetWindowWidth - windowWidthOverhead))
     }
 }
 
@@ -216,9 +217,7 @@ public struct SpacerLengthSettler: Sendable, Equatable {
     private let windowWidthOverhead: CGFloat
     private let tolerance: CGFloat
     private let maximumUnderfill: CGFloat
-    private let maximumCorrections: Int
-    private let leadingReservedWidth: CGFloat
-    private var correctionCount = 0
+    private let maximumOverflow: CGFloat
 
     public init(
         initialLength: CGFloat,
@@ -227,16 +226,17 @@ public struct SpacerLengthSettler: Sendable, Equatable {
         leadingReservedWidth: CGFloat = 0,
         tolerance: CGFloat = 0.5,
         maximumUnderfill: CGFloat = SpacerConfiguration.maximumAnchorUnderfill,
+        maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow,
         maximumCorrections: Int = 3
     ) {
         windowWidthOverhead = max(0, initialFrame.width - initialLength)
         self.tolerance = tolerance
         self.maximumUnderfill = max(0, maximumUnderfill)
-        self.maximumCorrections = max(0, maximumCorrections)
-        self.leadingReservedWidth = max(0, leadingReservedWidth)
+        self.maximumOverflow = max(0, maximumOverflow)
+        _ = maximumCorrections
         requestedLength = max(
             0,
-            initialLength + initialFrame.minX - self.leadingReservedWidth - islandFrame.minX
+            islandFrame.width - max(0, leadingReservedWidth) - windowWidthOverhead
         )
     }
 
@@ -251,27 +251,12 @@ public struct SpacerLengthSettler: Sendable, Equatable {
             return .wait
         }
 
-        guard spacerFrame.maxX >= islandFrame.maxX - maximumUnderfill else {
+        let rightEdgeError = spacerFrame.maxX - islandFrame.maxX
+        guard rightEdgeError >= -maximumUnderfill,
+              rightEdgeError <= maximumOverflow else {
             return .recalibrate
         }
-
-        let leftEdgeError = spacerFrame.minX - leadingReservedWidth - islandFrame.minX
-        if abs(leftEdgeError) <= tolerance {
-            return .ready(anchorRight: spacerFrame.maxX)
-        }
-
-        guard correctionCount < maximumCorrections else {
-            return .failed
-        }
-
-        let correctedLength = max(0, currentLength + leftEdgeError)
-        guard abs(correctedLength - currentLength) > tolerance else {
-            return .failed
-        }
-
-        correctionCount += 1
-        requestedLength = correctedLength
-        return .setLength(correctedLength)
+        return .ready(anchorRight: spacerFrame.maxX)
     }
 }
 

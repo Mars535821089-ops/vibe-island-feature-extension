@@ -568,6 +568,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hasCollision: Bool?
     ) {
         let directIntersections = itemFrames.filter { $0.intersects(islandFrame) }.count
+        let unclickableCenters = itemFrames.filter { frame in
+            islandFrame.contains(CGPoint(x: frame.midX, y: islandFrame.midY))
+        }.count
         let relocatedFrames = spacerFrame.map {
             SpacerPolicy.rightSideFrames(
                 itemFrames: itemFrames,
@@ -594,6 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spacer=\(NSStringFromRect(spacerFrame ?? .zero))
         items=\(itemFrames.count)
         directIntersections=\(directIntersections)
+        unclickableCenters=\(unclickableCenters)
         relocatedItems=\(relocatedFrames.count)
         unprotectedIntersections=\(unprotectedIntersections)
         """

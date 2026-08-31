@@ -75,8 +75,8 @@ func underCoveredSpacerRequestsRecalibration() {
     )
 }
 
-@Test("the nearest covering anchor aligns the spacer left edge")
-func alignsCoveringSpacerLeftEdge() {
+@Test("the nearest covering anchor preserves the exact compact width")
+func preservesExactWidthAtCoveringAnchor() {
     let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
     let spacer = CGRect(x: 1558, y: 0, width: 344, height: 30)
 
@@ -85,7 +85,7 @@ func alignsCoveringSpacerLeftEdge() {
             currentLength: 338,
             spacerFrame: spacer,
             islandFrame: island
-        ) == .setLength(353)
+        ) == .setLength(348)
     )
 }
 
@@ -117,8 +117,8 @@ func moderateRightGapRequestsRecalibration() {
     )
 }
 
-@Test("a one-point anchor underfill avoids a large right-side gap")
-func acceptsMinimalAnchorUnderfill() {
+@Test("an accepted anchor always requests the exact compact island width")
+func acceptedAnchorRequestsExactIslandWidth() {
     let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
     let spacer = CGRect(x: 1543, y: 0, width: 353, height: 30)
 
@@ -127,7 +127,7 @@ func acceptsMinimalAnchorUnderfill() {
             currentLength: 337,
             spacerFrame: spacer,
             islandFrame: island
-        ) == .setLength(337)
+        ) == .setLength(338)
     )
 }
 
@@ -141,10 +141,10 @@ func lengthSettlementWaitsForPublishedWidth() {
         islandFrame: island
     )
 
-    #expect(settler.requestedLength == 352)
+    #expect(settler.requestedLength == 338)
     #expect(
         settler.observe(
-            currentLength: 352,
+            currentLength: 338,
             spacerFrame: probe,
             islandFrame: island
         ) == .wait
@@ -163,10 +163,10 @@ func lengthSettlementCompletesAfterPublishedFrame() {
 
     #expect(
         settler.observe(
-            currentLength: 352,
-            spacerFrame: CGRect(x: 1543, y: 0, width: 368, height: 30),
+            currentLength: 338,
+            spacerFrame: CGRect(x: 1543, y: 0, width: 354, height: 30),
             islandFrame: island
-        ) == .ready(anchorRight: 1911)
+        ) == .ready(anchorRight: 1897)
     )
 }
 
@@ -180,13 +180,34 @@ func lengthSettlementAcceptsMinimalUnderfill() {
         islandFrame: island
     )
 
-    #expect(settler.requestedLength == 337)
+    #expect(settler.requestedLength == 338)
     #expect(
         settler.observe(
-            currentLength: 337,
-            spacerFrame: CGRect(x: 1543, y: 0, width: 353, height: 30),
+            currentLength: 338,
+            spacerFrame: CGRect(x: 1542, y: 0, width: 354, height: 30),
             islandFrame: island
         ) == .ready(anchorRight: 1896)
+    )
+}
+
+@Test("length settlement keeps the spacer exactly as wide as the compact island")
+func lengthSettlementKeepsExactIslandWidth() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let probe = CGRect(x: 1875, y: 0, width: 16, height: 30)
+    var settler = SpacerLengthSettler(
+        initialLength: 0,
+        initialFrame: probe,
+        islandFrame: island,
+        maximumUnderfill: 6
+    )
+
+    #expect(settler.requestedLength == 338)
+    #expect(
+        settler.observe(
+            currentLength: 338,
+            spacerFrame: CGRect(x: 1537, y: 0, width: 354, height: 30),
+            islandFrame: island
+        ) == .ready(anchorRight: 1891)
     )
 }
 
@@ -202,8 +223,8 @@ func lengthSettlementRecalibratesForUndercoverage() {
 
     #expect(
         settler.observe(
-            currentLength: 352,
-            spacerFrame: CGRect(x: 1520, y: 0, width: 368, height: 30),
+            currentLength: 338,
+            spacerFrame: CGRect(x: 1514, y: 0, width: 354, height: 30),
             islandFrame: island
         ) == .recalibrate
     )
@@ -258,8 +279,8 @@ func rejectsNoncontiguousRightSideIcons() {
     )
 }
 
-@Test("retained icon widths shorten the spacer instead of creating a right gap")
-func retainedIconsShortenSpacer() {
+@Test("reserved widths are removed from the exact compact target")
+func reservedWidthsAreRemovedFromExactTarget() {
     let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
     let spacer = CGRect(x: 1543, y: 0, width: 421, height: 30)
 
@@ -270,7 +291,7 @@ func retainedIconsShortenSpacer() {
             islandFrame: island,
             leadingReservedWidth: 79,
             maximumOverflow: .greatestFiniteMagnitude
-        ) == .setLength(326)
+        ) == .setLength(259)
     )
 }
 
@@ -475,7 +496,7 @@ func configurationDefaultsToMeasuredWidth() {
         configuration.savedCalibrationVersionKey
             == "VibeIslandMenuSpacer Saved Calibration Version"
     )
-    #expect(SpacerConfiguration.calibrationVersion == 7)
+    #expect(SpacerConfiguration.calibrationVersion == 8)
 }
 
 @Test("configuration accepts a positive width override")
