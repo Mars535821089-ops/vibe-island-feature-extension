@@ -211,6 +211,26 @@ func lengthSettlementKeepsExactIslandWidth() {
     )
 }
 
+@Test("length settlement accepts the measured fifteen-point discrete anchor underfill")
+func lengthSettlementAcceptsMeasuredDiscreteUnderfill() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let probe = CGRect(x: 1866, y: 0, width: 16, height: 30)
+    var settler = SpacerLengthSettler(
+        initialLength: 0,
+        initialFrame: probe,
+        islandFrame: island
+    )
+
+    #expect(settler.requestedLength == 338)
+    #expect(
+        settler.observe(
+            currentLength: 338,
+            spacerFrame: CGRect(x: 1528, y: 0, width: 354, height: 30),
+            islandFrame: island
+        ) == .ready(anchorRight: 1882)
+    )
+}
+
 @Test("length settlement recalibrates if the expanded anchor no longer covers the island")
 func lengthSettlementRecalibratesForUndercoverage() {
     let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
@@ -484,10 +504,10 @@ func configurationDefaultsToMeasuredWidth() {
 
     #expect(SpacerConfiguration.compactIslandWidth == 354)
     #expect(configuration.width == 354)
-    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ConditionalSlot.v8")
+    #expect(configuration.autosaveName == "VibeIslandMenuSpacer.ConditionalSlot.v9")
     #expect(
         configuration.preferredPositionKey
-        == "NSStatusItem Preferred Position VibeIslandMenuSpacer.ConditionalSlot.v8"
+        == "NSStatusItem Preferred Position VibeIslandMenuSpacer.ConditionalSlot.v9"
     )
     #expect(configuration.savedPositionKey == "VibeIslandMenuSpacer Saved Preferred Position")
     #expect(configuration.savedLengthKey == "VibeIslandMenuSpacer Saved Length")
@@ -496,7 +516,7 @@ func configurationDefaultsToMeasuredWidth() {
         configuration.savedCalibrationVersionKey
             == "VibeIslandMenuSpacer Saved Calibration Version"
     )
-    #expect(SpacerConfiguration.calibrationVersion == 8)
+    #expect(SpacerConfiguration.calibrationVersion == 9)
 }
 
 @Test("configuration accepts a positive width override")
