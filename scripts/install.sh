@@ -20,8 +20,17 @@ if [[ -e "$DEST" && ! -f "$ROOT_DIR/.installed-path" ]]; then
   echo "$BACKUP" > "$ROOT_DIR/.restore-backup-path"
   echo "已保留旧版本：$BACKUP"
 fi
-ditto "$SOURCE" "$DEST"
-codesign --force --deep --sign - "$DEST" >/dev/null
+# Never merge a newly signed bundle into an older signed bundle: stale sealed
+# resources make the destination invalid. Stage on the same volume and replace
+# the helper bundle as a unit after the build has succeeded.
+STAGED="$DEST_DIR/.${APP_NAME}.installing.$$"
+rm -rf "$STAGED"
+ditto "$SOURCE" "$STAGED"
+codesign --verify --deep --strict "$STAGED"
+rm -rf "$DEST"
+mv "$STAGED" "$DEST"
+# Preserve the already-stable signature produced by build_app.sh. Re-signing
+# the copied app ad-hoc would invalidate the user's existing TCC grant.
 codesign --verify --deep --strict "$DEST"
 echo "$DEST" > "$ROOT_DIR/.installed-path"
 
@@ -51,7 +60,7 @@ PLIST
 plutil -lint "$LAUNCH_AGENT" >/dev/null
 launchctl bootout "gui/$UID_VALUE/$LAUNCH_AGENT_LABEL" 2>/dev/null || true
 pkill -TERM -x VibeIslandMenuSpacer 2>/dev/null || true
-launchctl bootstrap "gui/$UID_VALUE" "$LAUNCH_AGENT"
 launchctl enable "gui/$UID_VALUE/$LAUNCH_AGENT_LABEL"
+launchctl bootstrap "gui/$UID_VALUE" "$LAUNCH_AGENT"
 echo "已安装到：$DEST"
 echo "已启用登录启动；仅在真实菜单栏图标进入居中紧凑区域时创建占位。"

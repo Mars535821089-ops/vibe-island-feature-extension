@@ -273,6 +273,7 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
     private let maximumPosition: Int
     private var searchStep: Int
     private let maximumUnderfill: CGFloat
+    private let maximumOverflow: CGFloat
     private var coveringPosition: Int?
     private var coveringError: CGFloat?
     private var underfillingPosition: Int?
@@ -283,13 +284,15 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         initialPosition: Int,
         step: Int = 32,
         range: ClosedRange<Int> = 0...10_000,
-        maximumUnderfill: CGFloat = 0
+        maximumUnderfill: CGFloat = 0,
+        maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow
     ) {
         minimumPosition = range.lowerBound
         maximumPosition = range.upperBound
         candidate = min(max(initialPosition, range.lowerBound), range.upperBound)
         searchStep = max(1, step)
         self.maximumUnderfill = max(0, maximumUnderfill)
+        self.maximumOverflow = max(0, maximumOverflow)
     }
 
     public mutating func observe(coversTarget: Bool) -> PreferredPositionCalibrationAction {
@@ -310,11 +313,9 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         rightEdgeError: CGFloat?
     ) -> PreferredPositionCalibrationAction {
         observationCount += 1
-        // Window Server can temporarily report a non-monotonic slot map while
-        // neighboring menu items are reflowing. Never leave the app calibrating
-        // forever; the current candidate is the safest bounded fallback.
+        // Exhaustion is a failure, never evidence that the current slot is valid.
         if observationCount >= 18 {
-            return .ready(position: candidate)
+            return .failed
         }
         if coversTarget {
             if candidate >= (coveringPosition ?? minimumPosition) {
@@ -339,6 +340,9 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
                     return .ready(position: underfillingPosition)
                 }
                 if coversTarget && candidate == coveringPosition {
+                    if let rightEdgeError, rightEdgeError > maximumOverflow {
+                        return .failed
+                    }
                     return .ready(position: coveringPosition)
                 }
                 candidate = coveringPosition
@@ -352,6 +356,9 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         if coversTarget {
             let next = min(maximumPosition, candidate + searchStep)
             guard next != candidate else {
+                if let rightEdgeError, rightEdgeError > maximumOverflow {
+                    return .failed
+                }
                 return .ready(position: candidate)
             }
             candidate = next

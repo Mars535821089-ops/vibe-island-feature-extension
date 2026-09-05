@@ -45,7 +45,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# The helper uses no protected APIs, so a local ad-hoc signature is sufficient.
-codesign --force --deep --sign - "$APP_DIR" >/dev/null
+# Accessibility grants are bound to the app's designated code requirement.
+# An ad-hoc signature changes its cdhash after every rebuild and makes macOS
+# treat the same bundle path as a new client. Prefer a stable local development
+# identity when one exists; keep ad-hoc only as a portable build fallback.
+SIGN_IDENTITY="${VIBE_ISLAND_CODESIGN_IDENTITY:-$(
+  security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/.*"\(Apple Development:[^"]*\)".*/\1/p' \
+    | head -1
+)}"
+[[ -n "$SIGN_IDENTITY" ]] || SIGN_IDENTITY="-"
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
 codesign --verify --deep --strict "$APP_DIR"
 echo "$APP_DIR"
