@@ -6,14 +6,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var observationTimer: Timer?
     private let configuration = SpacerConfiguration()
-    private let runtimeAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v11"
-    private let runtimeCalibrationVersion = 11
+    // Keep this identity stable across releases. macOS persists the native
+    // Control Center insertion slot under the autosave name; versioning it
+    // makes every update look like a second, unrelated menu-bar item.
+    private let runtimeAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v12"
+    private let runtimeCalibrationVersion = 13
     private let setupMode = CommandLine.arguments.contains("--setup")
     private var positionCalibrator: PreferredPositionCalibrator?
     private var pendingCalibrationPosition: Int?
     private var currentPreferredPosition: Int?
     private var calibratedIslandRight: CGFloat?
     private var calibratedAnchorRight: CGFloat?
+    private var calibrationWidthSettler: SpacerLengthSettler?
     private var lengthSettler: SpacerLengthSettler?
     private var restoringSavedLayout = false
     private var calibrationFrame: CGRect?
@@ -24,13 +28,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var attemptGate = LayoutAttemptGate()
     private var failureReason = "none"
     private var blockedUntil: TimeInterval = 0
-    private let validatedCacheKey = "VibeIslandMenuSpacer Validated Layout v11"
+    private let validatedCacheKey = "VibeIslandMenuSpacer Validated Layout v13"
     private let geometryTolerance: CGFloat = 0.5
+    private let runtimeMaximumUnderfill: CGFloat = 4
     private let clickThroughController = MenuBarClickThroughController()
     // Control Center exposes status-item insertion boundaries rather than a
-    // continuous X coordinate. Accept one standard icon-slot quantum around
-    // the centered edge, then require the final hosted width to remain exactly
-    // 354pt and every native item center to sit outside the island.
+    // continuous X coordinate. Accept only the smallest bounded trailing
+    // reservation needed to align the spacer's left edge with the island, and
+    // require every native item center to remain outside the island.
     private let runtimeDiscreteTolerance: CGFloat = 20
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -96,9 +101,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     && SpacerGeometry.isHostedWindow(window.frame, in: menuBarFrame)
             }
         let itemWindows = hostedItemWindows.filter { window in
-            guard let spacerFrame else { return true }
-            return abs(window.frame.minX - spacerFrame.minX) > 1
-                || abs(window.frame.width - spacerFrame.width) > 1
+            let spacerFrames = [spacerFrame].compactMap { $0 }
+            return SpacerPolicy.excludingSpacer(
+                from: [window.frame],
+                spacerFrames: spacerFrames
+            ).count == 1
         }
         let itemFrames = itemWindows.map(\.frame)
         clickThroughController.update(
@@ -135,7 +142,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else if let spacerFrame {
                 if calibrationFrameIsStable(spacerFrame) {
-                    continueCalibration(spacerFrame: spacerFrame, islandFrame: islandFrame)
+                    if normalizeCalibrationWidth(
+                        spacerFrame: spacerFrame,
+                        islandFrame: islandFrame
+                    ) {
+                        continueCalibration(
+                            spacerFrame: spacerFrame,
+                            islandFrame: islandFrame
+                        )
+                    }
                 }
             }
             writeDiagnostics(
@@ -223,22 +238,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settlementWaitTicks = 0
                 item.length = length
             case let .ready(anchorRight):
-                lengthSettler = nil
-                settlementWaitTicks = 0
-                calibratedIslandRight = islandFrame.maxX
-                calibratedAnchorRight = anchorRight
                 let rightEdgeError = spacerFrame.maxX - islandFrame.maxX
-                guard abs(spacerFrame.width - islandFrame.width) <= geometryTolerance,
-                      rightEdgeError >= -runtimeDiscreteTolerance,
+                guard abs(spacerFrame.minX - islandFrame.minX) <= geometryTolerance,
+                      rightEdgeError >= -runtimeMaximumUnderfill,
                       rightEdgeError <= runtimeDiscreteTolerance,
                       !itemFrames.contains(where: { frame in
-                          islandFrame.contains(
-                              CGPoint(x: frame.midX, y: islandFrame.midY)
-                          )
+                          frame.intersection(islandFrame).width
+                              > runtimeMaximumUnderfill + geometryTolerance
+                              || islandFrame.contains(
+                                  CGPoint(x: frame.midX, y: islandFrame.midY)
+                              )
                       }) else {
                     failLayout("geometry-not-clickable")
                     return
                 }
+                lengthSettler = nil
+                settlementWaitTicks = 0
+                calibratedIslandRight = islandFrame.maxX
+                calibratedAnchorRight = anchorRight
                 saveSettledLayout(length: item.length, anchorRight: anchorRight)
                 attemptGate.complete()
                 failureReason = "none"
@@ -275,7 +292,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 currentLength: item.length,
                 spacerFrame: spacerFrame,
                 islandFrame: islandFrame,
-                maximumUnderfill: runtimeDiscreteTolerance,
+                trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX,
+                maximumUnderfill: runtimeMaximumUnderfill,
                 maximumOverflow: maximumOverflow
             ) {
             case .reposition:
@@ -392,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         restoringSavedLayout = false
         restorationWaitTicks = 0
         lengthSettler = nil
+        calibrationWidthSettler = nil
         settlementWaitTicks = 0
         calibratedIslandRight = nil
         calibratedAnchorRight = nil
@@ -401,7 +420,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         positionCalibrator = PreferredPositionCalibrator(
             initialPosition: initialPosition,
             step: 32,
-            maximumUnderfill: runtimeDiscreteTolerance,
+            maximumUnderfill: runtimeMaximumUnderfill,
+            minimumPositiveOverflow: 0,
             maximumOverflow: runtimeDiscreteTolerance
         )
         pendingCalibrationPosition = initialPosition
@@ -441,7 +461,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func continueCalibration(spacerFrame: CGRect, islandFrame: CGRect) {
+    private func continueCalibration(
+        spacerFrame: CGRect,
+        islandFrame: CGRect
+    ) {
         guard var calibrator = positionCalibrator else { return }
 
         let rightEdgeError = spacerFrame.maxX - islandFrame.maxX
@@ -449,8 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // neighboring Control Center items are settling. Lock a probe that is
         // already within the small visual tolerance before a later transient
         // sample can select a worse anchor.
-        if rightEdgeError >= -runtimeDiscreteTolerance,
-           rightEdgeError <= runtimeDiscreteTolerance {
+        if canCenterProbe(spacerFrame: spacerFrame, islandFrame: islandFrame) {
             positionCalibrator = nil
             pendingCalibrationPosition = nil
             applyPreferredPosition(calibrator.candidate)
@@ -465,6 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch calibrator.observe(rightEdgeError: rightEdgeError) {
         case let .retry(position):
             positionCalibrator = calibrator
+            calibrationWidthSettler = nil
             destroyStatusItem()
             pendingCalibrationPosition = position
             pendingCalibrationDelayTicks = 6
@@ -473,17 +496,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard position == currentPreferredPosition else {
                 positionCalibrator = PreferredPositionCalibrator(
                     initialPosition: position,
-                    maximumUnderfill: runtimeDiscreteTolerance,
+                    maximumUnderfill: runtimeMaximumUnderfill,
+                    minimumPositiveOverflow: 0,
                     maximumOverflow: runtimeDiscreteTolerance
                 )
+                calibrationWidthSettler = nil
                 destroyStatusItem()
                 pendingCalibrationPosition = position
                 pendingCalibrationDelayTicks = 6
                 resetCalibrationStability()
                 return
             }
-            guard rightEdgeError >= -runtimeDiscreteTolerance,
-                  rightEdgeError <= runtimeDiscreteTolerance else {
+            guard canCenterProbe(
+                spacerFrame: spacerFrame,
+                islandFrame: islandFrame
+            ) else {
                 failLayout("no-clickable-slot")
                 return
             }
@@ -501,6 +528,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func canCenterProbe(
+        spacerFrame: CGRect,
+        islandFrame: CGRect
+    ) -> Bool {
+        let rightEdgeError = spacerFrame.maxX - islandFrame.maxX
+        return rightEdgeError >= -runtimeMaximumUnderfill
+            && rightEdgeError <= runtimeDiscreteTolerance
+    }
+
+    private func normalizeCalibrationWidth(
+        spacerFrame: CGRect,
+        islandFrame: CGRect
+    ) -> Bool {
+        guard let item = statusItem else { return false }
+        var settler = calibrationWidthSettler ?? SpacerLengthSettler(
+            initialLength: item.length,
+            initialFrame: spacerFrame,
+            islandFrame: islandFrame,
+            maximumUnderfill: runtimeDiscreteTolerance,
+            maximumOverflow: runtimeDiscreteTolerance
+        )
+
+        switch settler.observe(
+            currentLength: item.length,
+            spacerFrame: spacerFrame,
+            islandFrame: islandFrame
+        ) {
+        case let .setLength(length):
+            calibrationWidthSettler = settler
+            item.length = length
+            resetCalibrationStability()
+            return false
+        case .wait:
+            calibrationWidthSettler = settler
+            return false
+        case .ready, .recalibrate, .failed:
+            calibrationWidthSettler = nil
+            return true
+        }
+    }
+
     private func beginLengthSettlement(
         item: NSStatusItem,
         spacerFrame: CGRect,
@@ -510,7 +578,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             initialLength: item.length,
             initialFrame: spacerFrame,
             islandFrame: islandFrame,
-            maximumUnderfill: runtimeDiscreteTolerance,
+            trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX,
+            maximumUnderfill: runtimeMaximumUnderfill,
             maximumOverflow: runtimeDiscreteTolerance
         )
         lengthSettler = settler
@@ -537,7 +606,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func savedPreferredPosition(fallback: Int) -> Int {
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: validatedCacheKey) else { return fallback }
+        // A previous verified position is only a calibration seed here. Live
+        // geometry must still pass the current version's full validation before
+        // it is restored or marked active. This avoids a slow full-range scan
+        // after app updates without trusting stale screen geometry.
         return (defaults.object(forKey: configuration.savedPositionKey) as? NSNumber)?.intValue
             ?? fallback
     }
@@ -549,7 +621,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calibrationVersion: Int?
     )? {
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: validatedCacheKey), let position = (
+        let calibrationVersion = (
+            defaults.object(forKey: configuration.savedCalibrationVersionKey) as? NSNumber
+        )?.intValue
+        // Version 12 introduced the single-item persisted geometry contract.
+        // Later releases may attempt that record, but restoration below still
+        // measures the real host frame and falls back to calibration on any
+        // mismatch. Do not force macOS to rediscover its discontinuous slot on
+        // every application update.
+        let hasCompatibleRecord = defaults.bool(forKey: validatedCacheKey)
+            || calibrationVersion.map { $0 >= 12 && $0 <= runtimeCalibrationVersion } == true
+        guard hasCompatibleRecord, let position = (
             defaults.object(forKey: configuration.savedPositionKey) as? NSNumber
         )?.intValue,
         let rawLength = (
@@ -563,9 +645,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let anchorRight = rawAnchorRight.flatMap { value in
             value.isFinite ? CGFloat(value) : nil
         }
-        let calibrationVersion = (
-            defaults.object(forKey: configuration.savedCalibrationVersionKey) as? NSNumber
-        )?.intValue
         return (position, CGFloat(rawLength), anchorRight, calibrationVersion)
     }
 
@@ -595,10 +674,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func destroyStatusItem() {
-        guard let item = statusItem else { return }
-        item.menu = nil
-        NSStatusBar.system.removeStatusItem(item)
-        statusItem = nil
+        if let item = statusItem {
+            item.menu = nil
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
     }
 
     private func failLayout(_ reason: String) {
@@ -613,6 +693,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         attemptGate.complete()
         destroyStatusItem()
         positionCalibrator = nil
+        calibrationWidthSettler = nil
         pendingCalibrationPosition = nil
         pendingCalibrationDelayTicks = 0
         resetCalibrationStability()
@@ -655,19 +736,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let unclickableCenters = itemFrames.filter { frame in
             islandFrame.contains(CGPoint(x: frame.midX, y: islandFrame.midY))
         }.count
-        let relocatedFrames = spacerFrame.map {
+        let adjacentLeftFrames = spacerFrame.map {
             SpacerPolicy.rightSideFrames(
                 itemFrames: itemFrames,
                 spacerFrame: $0,
                 count: 2
             )
         } ?? []
-        let unprotectedIntersections = itemFrames.filter { frame in
-            frame.intersects(islandFrame) && !relocatedFrames.contains { relocated in
-                abs(relocated.minX - frame.minX) <= 1
-                    && abs(relocated.width - frame.width) <= 1
-            }
-        }.count
+        let maximumEdgeOverlap = itemFrames.reduce(CGFloat.zero) { maximum, frame in
+            max(maximum, frame.intersection(islandFrame).width)
+        }
         let collisionText = hasCollision.map { String($0) } ?? "pending"
         let diagnostics = """
         blocked=\(attemptGate.blocked)
@@ -685,8 +763,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         items=\(itemFrames.count)
         directIntersections=\(directIntersections)
         unclickableCenters=\(unclickableCenters)
-        relocatedItems=\(relocatedFrames.count)
-        unprotectedIntersections=\(unprotectedIntersections)
+        adjacentLeftItems=\(adjacentLeftFrames.count)
+        maximumEdgeOverlap=\(maximumEdgeOverlap)
         clickThrough=\(clickThroughController.diagnosticState)
         """
         try? diagnostics.write(

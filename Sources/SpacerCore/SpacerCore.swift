@@ -142,12 +142,22 @@ public enum SpacerPolicy {
         spacerFrame: CGRect?
     ) -> [CGRect] {
         guard let spacerFrame else { return itemFrames }
+        return excludingSpacer(from: itemFrames, spacerFrames: [spacerFrame])
+    }
+
+    public static func excludingSpacer(
+        from itemFrames: [CGRect],
+        spacerFrames: [CGRect]
+    ) -> [CGRect] {
+        guard !spacerFrames.isEmpty else { return itemFrames }
 
         return itemFrames.filter { frame in
-            abs(frame.minX - spacerFrame.minX) > 1
-                || abs(frame.minY - spacerFrame.minY) > 1
-                || abs(frame.width - spacerFrame.width) > 1
-                || abs(frame.height - spacerFrame.height) > 1
+            !spacerFrames.contains { spacerFrame in
+                abs(frame.minX - spacerFrame.minX) <= 1
+                    && abs(frame.minY - spacerFrame.minY) <= 1
+                    && abs(frame.width - spacerFrame.width) <= 1
+                    && abs(frame.height - spacerFrame.height) <= 1
+            }
         }
     }
 
@@ -174,6 +184,7 @@ public enum SpacerPolicy {
         spacerFrame: CGRect,
         islandFrame: CGRect,
         leadingReservedWidth: CGFloat = 0,
+        trailingReservedWidth: CGFloat = 0,
         tolerance: CGFloat = 0.5,
         maximumUnderfill: CGFloat = SpacerConfiguration.maximumAnchorUnderfill,
         maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow
@@ -187,7 +198,10 @@ public enum SpacerPolicy {
         }
 
         let windowWidthOverhead = max(0, spacerFrame.width - currentLength)
-        let targetWindowWidth = max(0, islandFrame.width - max(0, leadingReservedWidth))
+        let targetWindowWidth = max(
+            0,
+            islandFrame.width - max(0, leadingReservedWidth) + trailingReservedWidth
+        )
         return .setLength(max(0, targetWindowWidth - windowWidthOverhead))
     }
 }
@@ -224,6 +238,7 @@ public struct SpacerLengthSettler: Sendable, Equatable {
         initialFrame: CGRect,
         islandFrame: CGRect,
         leadingReservedWidth: CGFloat = 0,
+        trailingReservedWidth: CGFloat = 0,
         tolerance: CGFloat = 0.5,
         maximumUnderfill: CGFloat = SpacerConfiguration.maximumAnchorUnderfill,
         maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow,
@@ -236,7 +251,10 @@ public struct SpacerLengthSettler: Sendable, Equatable {
         _ = maximumCorrections
         requestedLength = max(
             0,
-            islandFrame.width - max(0, leadingReservedWidth) - windowWidthOverhead
+            islandFrame.width
+                - max(0, leadingReservedWidth)
+                + trailingReservedWidth
+                - windowWidthOverhead
         )
     }
 
@@ -245,9 +263,11 @@ public struct SpacerLengthSettler: Sendable, Equatable {
         spacerFrame: CGRect,
         islandFrame: CGRect
     ) -> SpacerLengthSettlementAction {
+        if abs(currentLength - requestedLength) > tolerance {
+            return .setLength(requestedLength)
+        }
         let expectedWindowWidth = requestedLength + windowWidthOverhead
-        guard abs(currentLength - requestedLength) <= tolerance,
-              abs(spacerFrame.width - expectedWindowWidth) <= tolerance else {
+        guard abs(spacerFrame.width - expectedWindowWidth) <= tolerance else {
             return .wait
         }
 
@@ -273,11 +293,13 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
     private let maximumPosition: Int
     private var searchStep: Int
     private let maximumUnderfill: CGFloat
+    private let minimumPositiveOverflow: CGFloat
     private let maximumOverflow: CGFloat
     private var coveringPosition: Int?
     private var coveringError: CGFloat?
     private var underfillingPosition: Int?
     private var underfillingError: CGFloat?
+    private var observedPositions: Set<Int> = []
     private var observationCount = 0
 
     public init(
@@ -285,6 +307,7 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         step: Int = 32,
         range: ClosedRange<Int> = 0...10_000,
         maximumUnderfill: CGFloat = 0,
+        minimumPositiveOverflow: CGFloat = 0,
         maximumOverflow: CGFloat = SpacerConfiguration.maximumAnchorOverflow
     ) {
         minimumPosition = range.lowerBound
@@ -292,6 +315,7 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         candidate = min(max(initialPosition, range.lowerBound), range.upperBound)
         searchStep = max(1, step)
         self.maximumUnderfill = max(0, maximumUnderfill)
+        self.minimumPositiveOverflow = max(0, minimumPositiveOverflow)
         self.maximumOverflow = max(0, maximumOverflow)
     }
 
@@ -313,6 +337,7 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         rightEdgeError: CGFloat?
     ) -> PreferredPositionCalibrationAction {
         observationCount += 1
+        observedPositions.insert(candidate)
         // Exhaustion is a failure, never evidence that the current slot is valid.
         if observationCount >= 18 {
             return .failed
@@ -333,20 +358,39 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
             guard coveringPosition < underfillingPosition else {
                 return .failed
             }
+            // Preferred-position ordering is only approximately monotonic.
+            // Once a bracket exists, an integer probed near that boundary can
+            // map to a better native slot than either recorded endpoint.
+            if let rightEdgeError, accepts(rightEdgeError) {
+                return .ready(position: candidate)
+            }
             if underfillingPosition - coveringPosition <= 1 {
                 if let underfillingError,
-                   underfillingError >= -maximumUnderfill,
+                   accepts(underfillingError),
                    abs(underfillingError) < abs(coveringError ?? .greatestFiniteMagnitude) {
                     return .ready(position: underfillingPosition)
                 }
                 if coversTarget && candidate == coveringPosition {
-                    if let rightEdgeError, rightEdgeError > maximumOverflow {
-                        return .failed
+                    if rightEdgeError == nil {
+                        return .ready(position: coveringPosition)
                     }
+                }
+                if rightEdgeError == nil {
+                    candidate = coveringPosition
+                    return .retry(position: candidate)
+                }
+                if let coveringError, accepts(coveringError) {
                     return .ready(position: coveringPosition)
                 }
-                candidate = coveringPosition
-                return .retry(position: candidate)
+                if rightEdgeError != nil,
+                   let nearby = nextUnobservedNeighbor(
+                       coveringPosition: coveringPosition,
+                       underfillingPosition: underfillingPosition
+                   ) {
+                    candidate = nearby
+                    return .retry(position: candidate)
+                }
+                return .failed
             }
 
             candidate = coveringPosition + (underfillingPosition - coveringPosition) / 2
@@ -371,5 +415,31 @@ public struct PreferredPositionCalibrator: Sendable, Equatable {
         }
         searchStep = min(maximumPosition - minimumPosition, searchStep * 2)
         return .retry(position: candidate)
+    }
+
+    private func accepts(_ rightEdgeError: CGFloat) -> Bool {
+        if rightEdgeError <= 0 {
+            return rightEdgeError >= -maximumUnderfill
+        }
+        return rightEdgeError >= minimumPositiveOverflow
+            && rightEdgeError <= maximumOverflow
+    }
+
+    private func nextUnobservedNeighbor(
+        coveringPosition: Int,
+        underfillingPosition: Int,
+        radius: Int = 8
+    ) -> Int? {
+        for distance in 1...radius {
+            let left = coveringPosition - distance
+            if left >= minimumPosition, !observedPositions.contains(left) {
+                return left
+            }
+            let right = underfillingPosition + distance
+            if right <= maximumPosition, !observedPositions.contains(right) {
+                return right
+            }
+        }
+        return nil
     }
 }

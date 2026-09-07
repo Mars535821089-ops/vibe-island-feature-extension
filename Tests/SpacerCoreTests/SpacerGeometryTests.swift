@@ -170,6 +170,50 @@ func lengthSettlementCompletesAfterPublishedFrame() {
     )
 }
 
+@Test("length settlement absorbs a discrete right-edge slot gap while pinning the island left edge")
+func lengthSettlementAbsorbsTrailingSlotGap() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    var settler = SpacerLengthSettler(
+        initialLength: 338,
+        initialFrame: CGRect(x: 1551, y: 0, width: 354, height: 30),
+        islandFrame: island,
+        trailingReservedWidth: 8,
+        maximumUnderfill: 0,
+        maximumOverflow: 20
+    )
+
+    #expect(settler.requestedLength == 346)
+    #expect(
+        settler.observe(
+            currentLength: 346,
+            spacerFrame: CGRect(x: 1543, y: 0, width: 362, height: 30),
+            islandFrame: island
+        ) == .ready(anchorRight: 1905)
+    )
+}
+
+@Test("length settlement trims a four-point anchor underfill while pinning the island left edge")
+func lengthSettlementTrimsMinimalAnchorUnderfill() {
+    let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    var settler = SpacerLengthSettler(
+        initialLength: 338,
+        initialFrame: CGRect(x: 1539, y: 0, width: 354, height: 30),
+        islandFrame: island,
+        trailingReservedWidth: -4,
+        maximumUnderfill: 4,
+        maximumOverflow: 20
+    )
+
+    #expect(settler.requestedLength == 334)
+    #expect(
+        settler.observe(
+            currentLength: 334,
+            spacerFrame: CGRect(x: 1543, y: 0, width: 350, height: 30),
+            islandFrame: island
+        ) == .ready(anchorRight: 1893)
+    )
+}
+
 @Test("length settlement accepts a one-point anchor underfill")
 func lengthSettlementAcceptsMinimalUnderfill() {
     let island = CGRect(x: 1543, y: 0, width: 354, height: 30)
@@ -260,6 +304,20 @@ func excludesSpacerByGeometry() {
             from: [spacer, icon],
             spacerFrame: spacer
         ) == [icon]
+    )
+}
+
+@Test("the pre-pinning spacer frame is excluded during the CoreGraphics transition")
+func excludesPrePinningSpacerByGeometry() {
+    let oldSpacer = CGRect(x: 1559, y: 0, width: 354, height: 30)
+    let pinnedSpacer = CGRect(x: 1543, y: 0, width: 354, height: 30)
+    let nativeItem = CGRect(x: 1913, y: 0, width: 38, height: 30)
+
+    #expect(
+        SpacerPolicy.excludingSpacer(
+            from: [oldSpacer, nativeItem],
+            spacerFrames: [oldSpacer, pinnedSpacer]
+        ) == [nativeItem]
     )
 }
 

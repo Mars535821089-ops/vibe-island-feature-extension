@@ -4,6 +4,7 @@
 # Locally generated app bundles and rollback copies
 .artifacts/*
 .rollback/
+.evidence/
 
 # Local installation/restore state
 .installed-path

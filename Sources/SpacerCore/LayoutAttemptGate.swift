@@ -14,7 +14,7 @@ public struct LayoutAttemptGate: Sendable {
         return !expired(now: now)
     }
     public func expired(now: TimeInterval) -> Bool {
-        started.map { now - $0 >= 60 } ?? false
+        started.map { now - $0 >= 120 } ?? false
     }
     public mutating func complete() { started = nil }
     public mutating func fail() {
