@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Control Center insertion slot under the autosave name; versioning it
     // makes every update look like a second, unrelated menu-bar item.
     private let runtimeAutosaveName = "VibeIslandMenuSpacer.ConditionalSlot.v12"
-    private let runtimeCalibrationVersion = 13
+    private let runtimeCalibrationVersion = 15
     private let setupMode = CommandLine.arguments.contains("--setup")
     private var positionCalibrator: PreferredPositionCalibrator?
     private var pendingCalibrationPosition: Int?
@@ -28,22 +28,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var attemptGate = LayoutAttemptGate()
     private var failureReason = "none"
     private var blockedUntil: TimeInterval = 0
-    private let validatedCacheKey = "VibeIslandMenuSpacer Validated Layout v13"
+    private let validatedCacheKey = "VibeIslandMenuSpacer Validated Layout v15"
     private let geometryTolerance: CGFloat = 0.5
     private let runtimeMaximumUnderfill: CGFloat = 4
-    private let clickForwardingController = MenuBarClickForwardingController()
+    // The compact host has an interactive edge immediately left of the visible
+    // bar. Measure one native item width from the current collision instead of
+    // tying the clearance to one screenshot or icon combination.
+    private var runtimeLeftClickClearance: CGFloat = 0
     // Control Center exposes status-item insertion boundaries rather than a
     // continuous X coordinate. Accept only the smallest bounded trailing
     // reservation needed to align the spacer's left edge with the island, and
     // require every native item center to remain outside the island.
-    private let runtimeDiscreteTolerance: CGFloat = 20
+    // A preferred-position value selects a boundary between native status
+    // items, not a pixel coordinate. The closest boundary can therefore be one
+    // normal icon (up to 64 pt) beyond the compact island. Settlement absorbs
+    // only that measured remainder on the right while pinning the left edge to
+    // the island, which keeps every displaced item wholly on the left.
+    private let runtimeDiscreteTolerance: CGFloat = 64
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
-        LegacyVibeHostRecovery.repairIfNeeded()
-        clickForwardingController.start()
-
         if setupMode {
             let screen = NSScreen.main ?? NSScreen.screens.first
             let fallback = Int(
@@ -109,12 +114,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ).count == 1
         }
         let itemFrames = itemWindows.map(\.frame)
-        clickForwardingController.update(
-            menuBarFrame: menuBarFrame,
-            islandFrame: islandFrame,
-            itemWindows: itemWindows
-        )
-
         let now = ProcessInfo.processInfo.systemUptime
         if attemptGate.expired(now: now) { failLayout("layout-timeout") }
         let signature = NSStringFromRect(islandFrame) + itemWindows.sorted { $0.windowID < $1.windowID }
@@ -240,7 +239,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 item.length = length
             case let .ready(anchorRight):
                 let rightEdgeError = spacerFrame.maxX - islandFrame.maxX
-                guard abs(spacerFrame.minX - islandFrame.minX) <= geometryTolerance,
+                guard abs(
+                    spacerFrame.minX - (islandFrame.minX - runtimeLeftClickClearance)
+                ) <= geometryTolerance,
                       rightEdgeError >= -runtimeMaximumUnderfill,
                       rightEdgeError <= runtimeDiscreteTolerance,
                       !itemFrames.contains(where: { frame in
@@ -287,13 +288,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            let requiredClearance = requiredLeftClickClearance(
+                itemFrames: itemFrames,
+                spacerFrame: spacerFrame,
+                islandFrame: islandFrame
+            )
+            if abs(requiredClearance - runtimeLeftClickClearance) > geometryTolerance {
+                runtimeLeftClickClearance = requiredClearance
+                beginLengthSettlement(
+                    item: item,
+                    spacerFrame: spacerFrame,
+                    islandFrame: islandFrame
+                )
+                writeDiagnostics(
+                    islandFrame: islandFrame,
+                    spacerFrame: spacerFrame,
+                    itemFrames: itemFrames,
+                    hasCollision: true
+                )
+                return
+            }
+
             let maximumOverflow = runtimeDiscreteTolerance
 
             switch SpacerPolicy.alignmentAction(
                 currentLength: item.length,
                 spacerFrame: spacerFrame,
                 islandFrame: islandFrame,
-                trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX,
+                trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX
+                    + runtimeLeftClickClearance,
                 maximumUnderfill: runtimeMaximumUnderfill,
                 maximumOverflow: maximumOverflow
             ) {
@@ -363,6 +386,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPresent: false,
             hasCollision: hasCollision
         ) == .create {
+            runtimeLeftClickClearance = requiredLeftClickClearance(
+                itemFrames: itemFrames,
+                spacerFrame: nil,
+                islandFrame: islandFrame
+            )
             beginSavedRestoreOrCalibration(islandFrame: islandFrame)
         }
 
@@ -579,7 +607,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             initialLength: item.length,
             initialFrame: spacerFrame,
             islandFrame: islandFrame,
-            trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX,
+            trailingReservedWidth: spacerFrame.maxX - islandFrame.maxX
+                + runtimeLeftClickClearance,
             maximumUnderfill: runtimeMaximumUnderfill,
             maximumOverflow: runtimeDiscreteTolerance
         )
@@ -684,8 +713,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func failLayout(_ reason: String) {
         removeSpacer()
-        attemptGate.fail()
-        blockedUntil = ProcessInfo.processInfo.systemUptime + 2
+        // Control Center can expose transient geometry while it reorders native
+        // items. Retry the unchanged real collision after a bounded cooldown;
+        // blocking until a second signature change can otherwise leave the same
+        // covered icons permanently unhandled.
+        blockedUntil = ProcessInfo.processInfo.systemUptime + 5
         failureReason = reason
         UserDefaults.standard.removeObject(forKey: validatedCacheKey)
     }
@@ -705,6 +737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentPreferredPosition = nil
         calibratedIslandRight = nil
         calibratedAnchorRight = nil
+        runtimeLeftClickClearance = 0
     }
 
     private func menuBarWindows() -> [MenuBarWindow] {
@@ -725,6 +758,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 frame: frame
             )
         }
+    }
+
+    private func requiredLeftClickClearance(
+        itemFrames: [CGRect],
+        spacerFrame: CGRect?,
+        islandFrame: CGRect
+    ) -> CGFloat {
+        let projectedFrames = itemFrames.map { frame in
+            guard let spacerFrame,
+                  frame.maxX <= spacerFrame.minX + 1 else { return frame }
+            return frame.offsetBy(dx: spacerFrame.width, dy: 0)
+        }
+        return projectedFrames
+            .filter { $0.intersects(islandFrame) }
+            .map(\.width)
+            .max() ?? 0
     }
 
     private func writeDiagnostics(
@@ -765,8 +814,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         directIntersections=\(directIntersections)
         unclickableCenters=\(unclickableCenters)
         adjacentLeftItems=\(adjacentLeftFrames.count)
+        leftClickClearance=\(runtimeLeftClickClearance)
         maximumEdgeOverlap=\(maximumEdgeOverlap)
-        clickForwarding=\(clickForwardingController.diagnosticState)
+        hostMovement=disabled
         """
         try? diagnostics.write(
             toFile: "/tmp/VibeIslandMenuSpacer-diagnostics.txt",
@@ -777,290 +827,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitAndRestore() {
         observationTimer?.invalidate()
-        clickForwardingController.stop()
         removeSpacer()
         NSApplication.shared.terminate(nil)
-    }
-}
-
-/// Vibe Island's transparent host window can win hit-testing outside the
-/// visible compact bar. For a click backed by a real native menu extra, remove
-/// that host from hit-testing only for the event, then restore it transactionally.
-private final class MenuBarClickForwardingController: @unchecked Sendable {
-    private struct Snapshot {
-        var menuBarFrame = CGRect.zero
-        var islandFrame = CGRect.zero
-        var itemWindows: [MenuBarWindow] = []
-    }
-
-    private struct MovedWindow {
-        let element: AXUIElement
-        let originalPosition: CGPoint
-    }
-
-    private var snapshot = Snapshot()
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var movedWindows: [MovedWindow] = []
-    private var restoreGeneration = 0
-    private var forwardedCount = 0
-    private(set) var diagnosticState = "stopped"
-
-    func start() {
-        guard eventTap == nil else { return }
-        let mask = (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
-            | (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
-        let opaqueSelf = Unmanaged.passUnretained(self).toOpaque()
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: menuBarClickForwardingCallback,
-            userInfo: opaqueSelf
-        ) else {
-            diagnosticState = "unavailable"
-            return
-        }
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        eventTap = tap
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        diagnosticState = "ready"
-    }
-
-    func stop() {
-        restoreMovedWindows()
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        if let eventTap { CFMachPortInvalidate(eventTap) }
-        runLoopSource = nil
-        eventTap = nil
-        diagnosticState = "stopped"
-    }
-
-    func update(
-        menuBarFrame: CGRect,
-        islandFrame: CGRect,
-        itemWindows: [MenuBarWindow]
-    ) {
-        snapshot = Snapshot(
-            menuBarFrame: menuBarFrame,
-            islandFrame: islandFrame,
-            itemWindows: itemWindows
-        )
-        if movedWindows.isEmpty {
-            LegacyVibeHostRecovery.repairIfNeeded()
-        }
-    }
-
-    fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
-            if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
-            diagnosticState = "ready"
-            return Unmanaged.passUnretained(event)
-        case .leftMouseDown:
-            prepareClickThrough(at: event.location)
-            return Unmanaged.passUnretained(event)
-        case .leftMouseUp:
-            scheduleRestore(after: 0.12)
-            return Unmanaged.passUnretained(event)
-        default:
-            return Unmanaged.passUnretained(event)
-        }
-    }
-
-    private func prepareClickThrough(at point: CGPoint) {
-        restoreMovedWindows()
-        let current = snapshot
-        guard current.menuBarFrame.contains(point),
-              !current.islandFrame.contains(point),
-              current.itemWindows.contains(where: { $0.frame.contains(point) }) else {
-            return
-        }
-
-        let hosts = vibeHostWindows(containing: point, islandFrame: current.islandFrame)
-        for host in hosts {
-            if let moved = moveHostWindow(host) {
-                movedWindows.append(moved)
-            }
-        }
-        guard !movedWindows.isEmpty else { return }
-        diagnosticState = "forwarding"
-        scheduleRestore(after: 0.8)
-    }
-
-    private func vibeHostWindows(
-        containing point: CGPoint,
-        islandFrame: CGRect
-    ) -> [(pid: pid_t, frame: CGRect)] {
-        let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] ?? []
-        return windows.compactMap { info in
-            guard info[kCGWindowOwnerName as String] as? String == "Vibe Island",
-                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
-                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-                  frame.contains(point),
-                  frame.width > islandFrame.width + 20,
-                  frame.height > max(50, islandFrame.height + 20) else { return nil }
-            return (pid, frame)
-        }
-    }
-
-    private func moveHostWindow(_ host: (pid: pid_t, frame: CGRect)) -> MovedWindow? {
-        let application = AXUIElementCreateApplication(host.pid)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            application,
-            kAXWindowsAttribute as CFString,
-            &value
-        ) == .success,
-        let windows = value as? [AXUIElement] else { return nil }
-        for window in windows {
-            guard let current = AXGeometry.frame(of: window),
-                  abs(current.minX - host.frame.minX) <= 2,
-                  abs(current.minY - host.frame.minY) <= 2,
-                  abs(current.width - host.frame.width) <= 2,
-                  abs(current.height - host.frame.height) <= 2 else { continue }
-            var offscreen = CGPoint(x: -host.frame.width - 200, y: current.minY)
-            guard let value = AXValueCreate(.cgPoint, &offscreen),
-                  AXUIElementSetAttributeValue(
-                    window,
-                    kAXPositionAttribute as CFString,
-                    value
-                  ) == .success else { return nil }
-            return MovedWindow(element: window, originalPosition: current.origin)
-        }
-        return nil
-    }
-
-    private func scheduleRestore(after delay: TimeInterval) {
-        restoreGeneration += 1
-        let generation = restoreGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.restoreGeneration == generation else { return }
-            self.restoreMovedWindows()
-        }
-    }
-
-    private func restoreMovedWindows() {
-        guard !movedWindows.isEmpty else { return }
-        let pending = movedWindows
-        movedWindows.removeAll()
-        for moved in pending {
-            var original = moved.originalPosition
-            if let value = AXValueCreate(.cgPoint, &original) {
-                _ = AXUIElementSetAttributeValue(
-                    moved.element,
-                    kAXPositionAttribute as CFString,
-                    value
-                )
-            }
-        }
-        forwardedCount += 1
-        diagnosticState = eventTap == nil
-            ? "stopped"
-            : "ready-forwarded-\(forwardedCount)"
-    }
-}
-
-private func menuBarClickForwardingCallback(
-    proxy: CGEventTapProxy,
-    type: CGEventType,
-    event: CGEvent,
-    userInfo: UnsafeMutableRawPointer?
-) -> Unmanaged<CGEvent>? {
-    guard let userInfo else { return Unmanaged.passUnretained(event) }
-    let controller = Unmanaged<MenuBarClickForwardingController>
-        .fromOpaque(userInfo)
-        .takeUnretainedValue()
-    return controller.handle(type: type, event: event)
-}
-
-private enum AXGeometry {
-    static func point(of element: AXUIElement, attribute: String) -> CGPoint? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
-              let value,
-              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
-        var point = CGPoint.zero
-        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
-        return point
-    }
-
-    static func size(of element: AXUIElement) -> CGSize? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXSizeAttribute as CFString,
-            &value
-        ) == .success,
-        let value,
-        CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
-        var size = CGSize.zero
-        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
-        return size
-    }
-
-    static func frame(of element: AXUIElement) -> CGRect? {
-        guard let position = point(of: element, attribute: kAXPositionAttribute),
-              let size = size(of: element) else { return nil }
-        return CGRect(origin: position, size: size)
-    }
-}
-
-/// Repairs only the exact off-screen coordinate used during transactional
-/// click-through. No normally positioned Vibe Island window is changed.
-private enum LegacyVibeHostRecovery {
-    static func repairIfNeeded() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        for info in windows {
-            guard info[kCGWindowOwnerName as String] as? String == "Vibe Island",
-                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
-                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-                  frame.width > SpacerConfiguration.compactIslandWidth + 20,
-                  frame.height > 50,
-                  abs(frame.minX - (-frame.width - 200)) <= 2 else { continue }
-            restoreWindow(pid: pid, frame: frame, screen: screen)
-        }
-    }
-
-    private static func restoreWindow(pid: pid_t, frame: CGRect, screen: NSScreen) {
-        let application = AXUIElementCreateApplication(pid)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            application,
-            kAXWindowsAttribute as CFString,
-            &value
-        ) == .success,
-        let windows = value as? [AXUIElement] else { return }
-        for window in windows {
-            guard let current = AXGeometry.frame(of: window),
-                  abs(current.minX - frame.minX) <= 2,
-                  abs(current.minY - frame.minY) <= 2,
-                  abs(current.width - frame.width) <= 2,
-                  abs(current.height - frame.height) <= 2 else { continue }
-            var centered = CGPoint(
-                x: screen.frame.midX - frame.width / 2,
-                y: screen.frame.minY
-            )
-            guard let position = AXValueCreate(.cgPoint, &centered) else { return }
-            _ = AXUIElementSetAttributeValue(
-                window,
-                kAXPositionAttribute as CFString,
-                position
-            )
-            return
-        }
     }
 }
 
