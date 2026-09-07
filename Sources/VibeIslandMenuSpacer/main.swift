@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let validatedCacheKey = "VibeIslandMenuSpacer Validated Layout v13"
     private let geometryTolerance: CGFloat = 0.5
     private let runtimeMaximumUnderfill: CGFloat = 4
-    private let clickThroughController = MenuBarClickThroughController()
+    private let clickForwardingController = MenuBarClickForwardingController()
     // Control Center exposes status-item insertion boundaries rather than a
     // continuous X coordinate. Accept only the smallest bounded trailing
     // reservation needed to align the spacer's left edge with the island, and
@@ -41,7 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
-        clickThroughController.start()
+        LegacyVibeHostRecovery.repairIfNeeded()
+        clickForwardingController.start()
 
         if setupMode {
             let screen = NSScreen.main ?? NSScreen.screens.first
@@ -108,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ).count == 1
         }
         let itemFrames = itemWindows.map(\.frame)
-        clickThroughController.update(
+        clickForwardingController.update(
             menuBarFrame: menuBarFrame,
             islandFrame: islandFrame,
             itemWindows: itemWindows
@@ -765,7 +766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         unclickableCenters=\(unclickableCenters)
         adjacentLeftItems=\(adjacentLeftFrames.count)
         maximumEdgeOverlap=\(maximumEdgeOverlap)
-        clickThrough=\(clickThroughController.diagnosticState)
+        clickForwarding=\(clickForwardingController.diagnosticState)
         """
         try? diagnostics.write(
             toFile: "/tmp/VibeIslandMenuSpacer-diagnostics.txt",
@@ -776,21 +777,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitAndRestore() {
         observationTimer?.invalidate()
-        clickThroughController.stop()
+        clickForwardingController.stop()
         removeSpacer()
         NSApplication.shared.terminate(nil)
     }
 }
 
-/// Vibe Island's visible compact bar is 354pt wide, but its transparent host
-/// window is much wider and can win hit-testing over menu extras that the
-/// spacer has correctly moved beside the compact bar.  The helper already has
-/// Accessibility access.  For a click that is demonstrably on a native menu
-/// extra outside the visible compact bar, move only that transparent host out
-/// of hit-testing for the duration of the click, then restore it immediately.
-/// Clicks on the compact bar and clicks not backed by a real menu-extra window
-/// are never altered.
-private final class MenuBarClickThroughController: @unchecked Sendable {
+/// Vibe Island's transparent host window can win hit-testing outside the
+/// visible compact bar. For a click backed by a real native menu extra, remove
+/// that host from hit-testing only for the event, then restore it transactionally.
+private final class MenuBarClickForwardingController: @unchecked Sendable {
     private struct Snapshot {
         var menuBarFrame = CGRect.zero
         var islandFrame = CGRect.zero
@@ -807,6 +803,7 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
     private var movedWindows: [MovedWindow] = []
     private var restoreGeneration = 0
+    private var forwardedCount = 0
     private(set) var diagnosticState = "stopped"
 
     func start() {
@@ -819,7 +816,7 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: mask,
-            callback: menuBarClickThroughCallback,
+            callback: menuBarClickForwardingCallback,
             userInfo: opaqueSelf
         ) else {
             diagnosticState = "unavailable"
@@ -854,6 +851,9 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
             islandFrame: islandFrame,
             itemWindows: itemWindows
         )
+        if movedWindows.isEmpty {
+            LegacyVibeHostRecovery.repairIfNeeded()
+        }
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -883,18 +883,13 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
         }
 
         let hosts = vibeHostWindows(containing: point, islandFrame: current.islandFrame)
-        guard !hosts.isEmpty else { return }
         for host in hosts {
-            guard let moved = moveHostWindow(host) else { continue }
-            movedWindows.append(moved)
+            if let moved = moveHostWindow(host) {
+                movedWindows.append(moved)
+            }
         }
-        guard !movedWindows.isEmpty else {
-            diagnosticState = "ax-move-failed"
-            return
-        }
+        guard !movedWindows.isEmpty else { return }
         diagnosticState = "forwarding"
-        // Mouse-up can be lost if an app opens a menu or starts tracking.
-        // This watchdog makes the temporary move self-healing in every case.
         scheduleRestore(after: 0.8)
     }
 
@@ -902,20 +897,18 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
         containing point: CGPoint,
         islandFrame: CGRect
     ) -> [(pid: pid_t, frame: CGRect)] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
-            as? [[String: Any]] ?? []
+        let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
         return windows.compactMap { info in
-            guard let owner = info[kCGWindowOwnerName as String] as? String,
-                  owner == "Vibe Island",
+            guard info[kCGWindowOwnerName as String] as? String == "Vibe Island",
                   let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let bounds = info[kCGWindowBounds as String] as? [String: Any],
                   let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   frame.contains(point),
                   frame.width > islandFrame.width + 20,
-                  frame.height > max(50, islandFrame.height + 20) else {
-                return nil
-            }
+                  frame.height > max(50, islandFrame.height + 20) else { return nil }
             return (pid, frame)
         }
     }
@@ -928,59 +921,23 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
             kAXWindowsAttribute as CFString,
             &value
         ) == .success,
-        let windows = value as? [AXUIElement] else {
-            return nil
-        }
-
+        let windows = value as? [AXUIElement] else { return nil }
         for window in windows {
-            guard let position = axPoint(window, attribute: kAXPositionAttribute),
-                  let size = axSize(window),
-                  abs(position.x - host.frame.minX) <= 2,
-                  abs(position.y - host.frame.minY) <= 2,
-                  abs(size.width - host.frame.width) <= 2,
-                  abs(size.height - host.frame.height) <= 2 else {
-                continue
-            }
-            var offscreen = CGPoint(x: -host.frame.width - 200, y: position.y)
-            guard let positionValue = AXValueCreate(.cgPoint, &offscreen),
+            guard let current = AXGeometry.frame(of: window),
+                  abs(current.minX - host.frame.minX) <= 2,
+                  abs(current.minY - host.frame.minY) <= 2,
+                  abs(current.width - host.frame.width) <= 2,
+                  abs(current.height - host.frame.height) <= 2 else { continue }
+            var offscreen = CGPoint(x: -host.frame.width - 200, y: current.minY)
+            guard let value = AXValueCreate(.cgPoint, &offscreen),
                   AXUIElementSetAttributeValue(
-                      window,
-                      kAXPositionAttribute as CFString,
-                      positionValue
-                  ) == .success else {
-                return nil
-            }
-            return MovedWindow(element: window, originalPosition: position)
+                    window,
+                    kAXPositionAttribute as CFString,
+                    value
+                  ) == .success else { return nil }
+            return MovedWindow(element: window, originalPosition: current.origin)
         }
         return nil
-    }
-
-    private func axPoint(_ element: AXUIElement, attribute: String) -> CGPoint? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            attribute as CFString,
-            &value
-        ) == .success,
-        let raw = value,
-        CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
-        var point = CGPoint.zero
-        guard AXValueGetValue(raw as! AXValue, .cgPoint, &point) else { return nil }
-        return point
-    }
-
-    private func axSize(_ element: AXUIElement) -> CGSize? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXSizeAttribute as CFString,
-            &value
-        ) == .success,
-        let raw = value,
-        CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
-        var size = CGSize.zero
-        guard AXValueGetValue(raw as! AXValue, .cgSize, &size) else { return nil }
-        return size
     }
 
     private func scheduleRestore(after delay: TimeInterval) {
@@ -997,30 +954,114 @@ private final class MenuBarClickThroughController: @unchecked Sendable {
         let pending = movedWindows
         movedWindows.removeAll()
         for moved in pending {
-            var position = moved.originalPosition
-            if let value = AXValueCreate(.cgPoint, &position) {
-                AXUIElementSetAttributeValue(
+            var original = moved.originalPosition
+            if let value = AXValueCreate(.cgPoint, &original) {
+                _ = AXUIElementSetAttributeValue(
                     moved.element,
                     kAXPositionAttribute as CFString,
                     value
                 )
             }
         }
-        diagnosticState = eventTap == nil ? "stopped" : "ready"
+        forwardedCount += 1
+        diagnosticState = eventTap == nil
+            ? "stopped"
+            : "ready-forwarded-\(forwardedCount)"
     }
 }
 
-private func menuBarClickThroughCallback(
+private func menuBarClickForwardingCallback(
     proxy: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
     userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
     guard let userInfo else { return Unmanaged.passUnretained(event) }
-    let controller = Unmanaged<MenuBarClickThroughController>
+    let controller = Unmanaged<MenuBarClickForwardingController>
         .fromOpaque(userInfo)
         .takeUnretainedValue()
     return controller.handle(type: type, event: event)
+}
+
+private enum AXGeometry {
+    static func point(of element: AXUIElement, attribute: String) -> CGPoint? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero
+        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    static func size(of element: AXUIElement) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSizeAttribute as CFString,
+            &value
+        ) == .success,
+        let value,
+        CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    static func frame(of element: AXUIElement) -> CGRect? {
+        guard let position = point(of: element, attribute: kAXPositionAttribute),
+              let size = size(of: element) else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+}
+
+/// Repairs only the exact off-screen coordinate used during transactional
+/// click-through. No normally positioned Vibe Island window is changed.
+private enum LegacyVibeHostRecovery {
+    static func repairIfNeeded() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        for info in windows {
+            guard info[kCGWindowOwnerName as String] as? String == "Vibe Island",
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  frame.width > SpacerConfiguration.compactIslandWidth + 20,
+                  frame.height > 50,
+                  abs(frame.minX - (-frame.width - 200)) <= 2 else { continue }
+            restoreWindow(pid: pid, frame: frame, screen: screen)
+        }
+    }
+
+    private static func restoreWindow(pid: pid_t, frame: CGRect, screen: NSScreen) {
+        let application = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXWindowsAttribute as CFString,
+            &value
+        ) == .success,
+        let windows = value as? [AXUIElement] else { return }
+        for window in windows {
+            guard let current = AXGeometry.frame(of: window),
+                  abs(current.minX - frame.minX) <= 2,
+                  abs(current.minY - frame.minY) <= 2,
+                  abs(current.width - frame.width) <= 2,
+                  abs(current.height - frame.height) <= 2 else { continue }
+            var centered = CGPoint(
+                x: screen.frame.midX - frame.width / 2,
+                y: screen.frame.minY
+            )
+            guard let position = AXValueCreate(.cgPoint, &centered) else { return }
+            _ = AXUIElementSetAttributeValue(
+                window,
+                kAXPositionAttribute as CFString,
+                position
+            )
+            return
+        }
+    }
 }
 
 private struct MenuBarWindow {
